@@ -27,7 +27,7 @@ from splicereportmatchexfo import (
 # ── Page config ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Splice Report + Topo Viewer",
+    page_title="Splice Report + Fiber Viewer",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -132,7 +132,7 @@ st.markdown("""
 <div class="tc-topbar"><span>OTDR QC Tools</span><span>Help</span></div>
 <div class="tc-navbar">
     <div class="tc-logo-icon">↗</div>
-    <a href="/" target="_self" class="tc-logo-name">Splice Report + Topo Viewer</a>
+    <a href="/" target="_self" class="tc-logo-name">Splice Report + Fiber Viewer</a>
     <div class="tc-navbar-spacer"></div>
     <div class="tc-contact-btn">OTDR QC &nbsp;▸</div>
 </div>
@@ -520,7 +520,7 @@ else:
                 padding:42px 36px 38px 36px; margin-bottom:28px;">
         <h1 style="font-family:'Nunito',sans-serif;font-size:32px;font-weight:900;
                    color:#fff;margin:0 0 10px 0;line-height:1.15;">
-            Splice Report<br>+ Topo Viewer
+            Splice Report<br>+ Fiber Viewer
         </h1>
         <p style="font-family:'Nunito',sans-serif;font-size:15px;
                   color:rgba(255,255,255,0.88);margin:0;font-weight:600;">
