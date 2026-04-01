@@ -572,6 +572,40 @@ if run_button and has_a:
 
 if st.session_state.get("done") and st.session_state.viewer_html:
     import streamlit.components.v1 as components
+
+    # Hide sidebar and remove its margin when in viewer mode
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"]          { display: none !important; }
+    [data-testid="stSidebarCollapsed"] { display: none !important; }
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 0.25rem !important;
+        max-width: 100% !important;
+    }
+    section[data-testid="stMain"] > div:first-child { margin-left: 0 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Orange bar + return button
+    col_bar, col_btn = st.columns([5, 1])
+    with col_bar:
+        st.markdown("""
+        <div style="background:#E8461E; height:38px; border-radius:3px;
+                    display:flex; align-items:center; padding:0 16px;">
+            <span style="color:#fff; font-family:'Nunito',sans-serif;
+                         font-weight:800; font-size:13px; letter-spacing:0.2px;">
+                Splice Report + Fiber Viewer
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_btn:
+        if st.button("← Return to Main Page", type="primary", use_container_width=True):
+            st.session_state.done = None
+            st.session_state.viewer_html = None
+            st.rerun()
+
     components.html(st.session_state.viewer_html, height=860, scrolling=False)
 
 else:
