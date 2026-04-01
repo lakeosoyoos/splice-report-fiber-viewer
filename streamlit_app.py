@@ -101,6 +101,25 @@ button[data-testid="stBaseButton-headerNoPadding"] { display: none !important; }
 [data-testid="stSidebar"] hr { border-color: #2e3d3d !important; }
 [data-testid="stSidebar"] .stCaption, [data-testid="stSidebar"] small { color: #aaa !important; }
 
+/* Checkbox label text — transparent background, light text */
+[data-testid="stSidebar"] .stCheckbox label {
+    background-color: transparent !important; background: transparent !important;
+}
+[data-testid="stSidebar"] .stCheckbox label:hover {
+    background-color: transparent !important; background: transparent !important;
+}
+[data-testid="stSidebar"] .stCheckbox label > div,
+[data-testid="stSidebar"] .stCheckbox label p {
+    color: #e8e8e8 !important; font-family: 'Nunito', sans-serif !important;
+    font-weight: 700 !important; background-color: transparent !important;
+}
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] [aria-checked="true"] > div:first-child {
+    background-color: #E8461E !important; border-color: #E8461E !important;
+}
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] > div:first-child {
+    border-color: #E8461E !important;
+}
+
 .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
     background-color: #E8461E !important; border-color: #E8461E !important;
     color: white !important; font-family: 'Nunito', sans-serif !important;
@@ -212,8 +231,20 @@ with st.sidebar:
 
     st.divider()
     st.markdown("## Settings")
-    threshold = st.number_input("Bidirectional threshold (dB, 0.15=auto)",
-                                value=REBURN_THRESHOLD, format="%.3f", step=0.01)
+    threshold   = st.number_input("Bidirectional threshold (dB, 0.15=auto)",
+                                  value=REBURN_THRESHOLD, format="%.3f", step=0.01)
+    ribbon_size = RIBBON_SIZE
+
+    st.markdown("**Include in Report**")
+    col_chk1, col_chk2 = st.columns(2)
+    with col_chk1:
+        inc_reburn = st.checkbox("A+B Reburn", value=True, key="inc_reburn")
+        inc_break  = st.checkbox("Break",      value=True, key="inc_break")
+        inc_broke  = st.checkbox("Broke",      value=True, key="inc_broke")
+    with col_chk2:
+        inc_bfill  = st.checkbox("B-fill",     value=True, key="inc_bfill")
+        inc_a_only = st.checkbox("A-only",     value=True, key="inc_a_only")
+        inc_b_only = st.checkbox("B-only",     value=True, key="inc_b_only")
 
     has_a = bool(uploaded_a) or bool(zip_a)
     run_button = st.button("Generate Viewer", type="primary",
@@ -381,6 +412,21 @@ if run_button and has_a:
     bar.progress(0.60, text="Pass 2: scanning B-direction for missed events...")
     b_results = scan_b_events(fibers_a, fibers_b, splices, threshold, results, span_km)
     all_results = {**results, **b_results}
+
+    # ── Apply event-type filters from sidebar ──────────────────────────────────
+    def _included(r):
+        if r.get('is_break')  and not st.session_state.get('inc_break',  True): return False
+        if r.get('is_broke')  and not st.session_state.get('inc_broke',  True): return False
+        if r.get('is_bfill')  and not st.session_state.get('inc_bfill',  True): return False
+        if r.get('is_a_only') and not st.session_state.get('inc_a_only', True): return False
+        if r.get('is_b_only') and not st.session_state.get('inc_b_only', True): return False
+        is_reburn = (r.get('event_source') == 'bidir'
+                     and not r.get('is_break') and not r.get('is_broke')
+                     and not r.get('is_bfill') and not r.get('is_a_only')
+                     and not r.get('is_b_only'))
+        if is_reburn and not st.session_state.get('inc_reburn', True): return False
+        return True
+    all_results = {k: v for k, v in all_results.items() if _included(v)}
 
     # Build breaks dict
     breaks = {}
