@@ -57,11 +57,16 @@ def fiber_dist_array(r):
     trace = r.get('trace')
     if trace is None:
         return None, None, None, None
-    acq_range = r.get('acq_range', 0)
     full_points = r.get('full_points', len(trace))
-    if acq_range <= 0 or full_points <= 0:
+    if full_points <= 0:
         return None, None, None, None
-    dx_km = acq_range / full_points
+    # acq_range is NOT in km — use exfo_sampling_period for correct dx
+    _C = 2.998e8   # m/s speed of light
+    _IOR = 1.4682  # typical single-mode IOR
+    sp = r.get('exfo_sampling_period', 0)
+    if sp <= 0:
+        return None, None, None, None
+    dx_km = sp * _C / (2 * _IOR) / 1000.0
     start_km = r.get('start_index', 0) * dx_km
     n = len(trace)
     dist = np.linspace(start_km, start_km + n * dx_km, n)
