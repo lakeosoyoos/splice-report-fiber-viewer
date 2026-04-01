@@ -101,13 +101,18 @@ button[data-testid="stBaseButton-headerNoPadding"] { display: none !important; }
 [data-testid="stSidebar"] hr { border-color: #2e3d3d !important; }
 [data-testid="stSidebar"] .stCaption, [data-testid="stSidebar"] small { color: #aaa !important; }
 
-/* Fix file uploader — hide duplicate instruction text, keep button only */
+/* Fix file uploader — hide duplicate instruction text, keep Upload button */
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
     display: none !important;
 }
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] {
     justify-content: center !important;
     padding: 8px 0 !important;
+}
+/* Hide Add button once a file is loaded (accept_multiple_files=False) */
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileUploaderDeleteBtn"])
+[data-testid="stFileUploaderDropzoneInstructions"] {
+    display: none !important;
 }
 
 /* Checkbox label text — transparent background, light text */
