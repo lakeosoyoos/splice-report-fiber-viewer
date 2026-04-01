@@ -81,9 +81,9 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 [data-testid="stSidebar"] {
     background-color: #1C2526 !important;
     border-right: 3px solid #E8461E !important;
-    width: 340px !important; min-width: 340px !important; max-width: 340px !important;
+    width: 620px !important; min-width: 620px !important; max-width: 620px !important;
 }
-[data-testid="stSidebar"] > div:first-child { padding-top: 0.5rem; width: 340px !important; }
+[data-testid="stSidebar"] > div:first-child { padding-top: 0.5rem; width: 620px !important; }
 [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"],
 button[data-testid="stBaseButton-headerNoPadding"] { display: none !important; }
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
