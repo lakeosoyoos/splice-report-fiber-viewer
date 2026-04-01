@@ -117,7 +117,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     <div id="topo-tooltip"></div>
   </div>
 </div>
-<button id="restore-btn" onclick="collapseToggle()">▶ 2D</button>
+<button id="restore-btn" onclick="collapseToggle()">▶ Expand 2D</button>
 <div id="setup-screen" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#f8f9fa;z-index:200;display:flex;align-items:center;justify-content:center">
   <div style="background:#fff;border:1px solid #ccc;border-radius:12px;padding:30px 40px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
     <h1 style="color:#1F4E79;font-size:20px;margin-bottom:8px">Splice Report Viewer</h1>
@@ -368,7 +368,13 @@ function buildTable() {
         else if (types.includes('b_only'))      td.className = 'cell-b_only';
         else if (types.includes('a_only_high')) td.className = 'cell-a_only_high';
         else if (types.includes('a_only'))      td.className = 'cell-a_only';
-        td.textContent = cell.entries.map(e => e.text).join('\n');
+        td.textContent = cell.entries.map(e => {
+          if ((e.type === 'break' || e.type === 'broke') && data.breaks?.[String(e.fnum)]) {
+            const bkm = data.breaks[String(e.fnum)].km;
+            return e.text + '\nA→B ' + bkm.toFixed(2) + ' km';
+          }
+          return e.text;
+        }).join('\n');
       }
       td.addEventListener('click', () => {
         const sp = data.splices[cell.splice_idx];
@@ -702,7 +708,7 @@ function draw2D() {
   const t = currentFiber > 0 ? `Fiber ${currentFiber}` : rib ? `${rib.tube} — F${rib.fibers}` : '';
   ctx.fillText(t, ML + 3, MT - 6);
 
-  // Mirror to popup window if open
+  // Push state to popup so it redraws with the same selection
   syncPopup();
 }
 
@@ -831,6 +837,7 @@ window.loadDataAndStart = async function() {
     catch (e2) { alert('Could not load data: ' + e2.message); return; }
   }
   document.getElementById('loading').style.display = 'none';
+  window._popupData = data;   // expose for popup window
   buildTable();
 
   document.getElementById('fiber-btn').addEventListener('click', () => {
@@ -1001,47 +1008,372 @@ window.popoutOpen = function() {
     alert('Pop-out blocked — please allow pop-ups for this site.');
     return;
   }
-  popupWin.document.write(`<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><title>OTDR 2D Trace — Splice Viewer</title>
+  popupWin.document.write(`<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>OTDR 2D Trace — Splice Viewer</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { background:#0d1117; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
-#pinfo { background:#1C2526; color:#e0e0e0; font-size:11px;
-         font-family:'Segoe UI',monospace; padding:5px 12px;
-         border-bottom:2px solid #E8461E; flex-shrink:0; }
-#pcanvas { flex:1; display:block; min-height:0; width:100%; background:#fff; }
-</style></head><body>
-<div id="pinfo">Waiting for trace data from main window...</div>
-<canvas id="pcanvas"></canvas>
+body { background:#fff; display:flex; flex-direction:column; height:100vh; overflow:hidden; font-family:'Segoe UI',system-ui,sans-serif; }
+#pheader { background:#1C2526; color:#e0e0e0; font-size:11px; font-family:'Segoe UI',monospace;
+           padding:5px 12px; border-bottom:2px solid #E8461E; flex-shrink:0; display:flex; align-items:center; gap:8px; }
+#pheader-label { color:#E8461E; font-weight:700; }
+#ptop { flex:1; min-height:0; position:relative; }
+#pcanvas { width:100%; height:100%; display:block; }
+#ptrace-tooltip { position:absolute; display:none; background:rgba(255,255,255,0.95);
+  border:1px solid #1F4E79; border-radius:3px; padding:4px 7px; font-size:10px; pointer-events:none; z-index:20; }
+#pcontrols { position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.92);
+  border:1px solid #ccc; border-radius:5px; padding:6px 8px; font-size:10px; z-index:10; width:150px; }
+#pcontrols h3 { font-size:10px; color:#1F4E79; margin-bottom:3px; }
+.plbl { font-size:9px; color:#888; margin:3px 0 1px; }
+#pfiber-input { width:100%; padding:3px; border:1px solid #ccc; border-radius:2px; font-size:10px; font-family:monospace; }
+.pbtn { width:100%; padding:3px; margin:2px 0; border:1px solid #1F4E79; border-radius:2px;
+        background:#f0f4f8; color:#1F4E79; font-size:9px; font-weight:bold; cursor:pointer; }
+.pbtn:hover { background:#d0e4f4; }
+#pchart-info { font-size:9px; color:#1F4E79; margin-top:4px; font-weight:600; }
+</style>
+</head>
+<body>
+<div id="pheader">OTDR 2D Trace — Splice Viewer &nbsp;<span id="pheader-label"></span></div>
+<div id="ptop">
+  <canvas id="pcanvas"></canvas>
+  <div id="ptrace-tooltip"></div>
+  <div id="pcontrols">
+    <h3>Controls</h3>
+    <div id="pchart-info">Synced from main window</div>
+    <div class="plbl">Fiber #</div>
+    <input type="text" id="pfiber-input" placeholder="e.g. 49">
+    <button class="pbtn" id="pfiber-btn">Show Fiber</button>
+    <button class="pbtn" id="pribbon-btn" style="border-color:#999;color:#666">Full Ribbon</button>
+    <div class="plbl">2D Zoom (km)</div>
+    <div style="display:flex;gap:3px">
+      <input type="number" id="pkm-start" value="0" min="0" step="1"
+             style="width:45px;padding:2px;border:1px solid #ccc;border-radius:2px;font-size:9px">
+      <span style="color:#888;font-size:9px">to</span>
+      <input type="number" id="pkm-end" value="75" min="0" step="1"
+             style="width:45px;padding:2px;border:1px solid #ccc;border-radius:2px;font-size:9px">
+    </div>
+    <button class="pbtn" id="pzoom-btn">Zoom</button>
+    <button class="pbtn" id="preset-zoom" style="border-color:#999;color:#666">Reset Zoom</button>
+  </div>
+</div>
 <script>
-window.addEventListener('message', function(ev) {
-  if (!ev.data || ev.data.type !== 'frame') return;
+var data = null;
+try { data = window.opener && window.opener._popupData; } catch(e) {}
+if (!data) { document.getElementById('pchart-info').textContent = 'No data — reopen from main window'; }
+
+var currentRibbon = -1, currentFiber = -1, highlightKm = null;
+var zoomKmStart = null, zoomKmEnd = null;
+var isDragging = false, dragStartX = 0, dragStartKmS = 0, dragStartKmE = 0;
+var damageDots = [];
+
+function getKmRange() {
+  if (!data) return 75;
+  var fibers = [];
+  if (currentFiber > 0) { fibers = [currentFiber]; }
+  else if (currentRibbon >= 0) {
+    var rib = data.ribbons[currentRibbon];
+    for (var i = rib.f_start; i <= rib.f_end; i++) fibers.push(i);
+  }
+  var maxKm = 0;
+  for (var i = 0; i < fibers.length; i++) {
+    var t = data.fiber_traces && data.fiber_traces[String(fibers[i])];
+    if (t && t.length) { var last = t[t.length-1][0]; if (last > maxKm) maxKm = last; }
+  }
+  return maxKm || (data.meta && data.meta.span_km) || 75;
+}
+
+function draw2D() {
+  if (!data) return;
+  var panel = document.getElementById('ptop');
   var canvas = document.getElementById('pcanvas');
-  var bmp = ev.data.bitmap;
-  canvas.width = bmp.width;
-  canvas.height = bmp.height;
-  canvas.getContext('2d').drawImage(bmp, 0, 0);
-  bmp.close();
-  if (ev.data.label) document.getElementById('pinfo').textContent = ev.data.label;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = panel.clientWidth * dpr;
+  canvas.height = panel.clientHeight * dpr;
+  canvas.style.width = panel.clientWidth + 'px';
+  canvas.style.height = panel.clientHeight + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = panel.clientWidth, H = panel.clientHeight;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+
+  var fibers = [];
+  if (currentFiber > 0) { fibers = [currentFiber]; }
+  else if (currentRibbon >= 0) {
+    var rib = data.ribbons[currentRibbon];
+    for (var f = rib.f_start; f <= rib.f_end; f++) fibers.push(f);
+  } else return;
+
+  var gMinDb = Infinity, gMaxDb = -Infinity, gMaxKm = 0;
+  for (var fi = 0; fi < fibers.length; fi++) {
+    var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
+    if (!tr) continue;
+    for (var pi = 0; pi < tr.length; pi++) {
+      if (tr[pi][1] < gMinDb) gMinDb = tr[pi][1];
+      if (tr[pi][1] > gMaxDb) gMaxDb = tr[pi][1];
+      if (tr[pi][0] > gMaxKm) gMaxKm = tr[pi][0];
+    }
+  }
+  if (!gMaxKm) return;
+
+  var vKmS = zoomKmStart != null ? zoomKmStart : 0;
+  var vKmE = zoomKmEnd   != null ? zoomKmEnd   : gMaxKm;
+  var minDb = Infinity, maxDb = -Infinity;
+  for (var fi = 0; fi < fibers.length; fi++) {
+    var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
+    if (!tr) continue;
+    for (var pi = 0; pi < tr.length; pi++) {
+      if (tr[pi][0] >= vKmS && tr[pi][0] <= vKmE) {
+        if (tr[pi][1] < minDb) minDb = tr[pi][1];
+        if (tr[pi][1] > maxDb) maxDb = tr[pi][1];
+      }
+    }
+  }
+  if (minDb === Infinity) { minDb = gMinDb; maxDb = gMaxDb; }
+  var dbPad = (maxDb - minDb) * 0.05; minDb -= dbPad; maxDb += dbPad;
+
+  var ML = 45, MR = 15, MT = 20, MB = 30;
+  var cW = W - ML - MR, cH = H - MT - MB;
+  function kmToX(km) { return ML + ((km - vKmS) / (vKmE - vKmS)) * cW; }
+  function dbToY(db)  { return MT + ((db - minDb) / (maxDb - minDb)) * cH; }
+
+  // Grid
+  ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.5;
+  for (var km = 0; km <= vKmE; km += 10) { var x = kmToX(km); if (x >= ML && x <= ML+cW) { ctx.beginPath(); ctx.moveTo(x,MT); ctx.lineTo(x,MT+cH); ctx.stroke(); } }
+  for (var db = Math.ceil(minDb); db <= maxDb; db += 2) { var y = dbToY(db); ctx.beginPath(); ctx.moveTo(ML,y); ctx.lineTo(ML+cW,y); ctx.stroke(); }
+
+  // Splice markers
+  for (var si = 0; si < data.splices.length; si++) {
+    var sp = data.splices[si], x = kmToX(sp.km);
+    var isHl = highlightKm != null && Math.abs(sp.km - highlightKm) < 0.1;
+    ctx.strokeStyle = sp.is_bend ? (isHl ? 'rgba(230,126,34,0.7)' : 'rgba(230,126,34,0.2)')
+                                 : (isHl ? 'rgba(31,78,121,0.6)'  : 'rgba(93,173,226,0.2)');
+    ctx.lineWidth = isHl ? 2.5 : 1;
+    ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT+cH); ctx.stroke();
+    ctx.fillStyle = sp.is_bend ? '#e67e22' : '#1F4E79';
+    ctx.font = (isHl ? 'bold ' : '') + '9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(sp.is_bend ? 'B' : 'S' + sp.splice_num, x, MT - 4);
+  }
+
+  // Traces
+  var greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
+  for (var fi = 0; fi < fibers.length; fi++) {
+    var fnum = fibers[fi];
+    var trace = data.fiber_traces && data.fiber_traces[String(fnum)];
+    if (!trace || trace.length < 2) continue;
+    var brk = data.breaks && data.breaks[String(fnum)];
+    var lw = fibers.length === 1 ? 1.8 : 0.8;
+    if (brk) {
+      ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+      ctx.beginPath(); var started = false;
+      for (var pi = 0; pi < trace.length; pi++) {
+        if (trace[pi][0] > brk.km) break;
+        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+        if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = '#FF4444'; ctx.lineWidth = lw + 0.5;
+      ctx.beginPath(); started = false;
+      for (var pi = 0; pi < trace.length; pi++) {
+        if (trace[pi][0] < brk.km - 0.5) continue;
+        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+        if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+      var bx = kmToX(brk.km);
+      var bpt = null; for (var pi = 0; pi < trace.length; pi++) { if (trace[pi][0] >= brk.km) { bpt = trace[pi]; break; } }
+      var by = bpt ? dbToY(bpt[1]) : MT + 10;
+      ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('F' + fnum + ' ' + brk.type, bx + 3, by - 5);
+      ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fillStyle = '#FF4444'; ctx.fill();
+    } else {
+      ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+      ctx.beginPath();
+      for (var pi = 0; pi < trace.length; pi++) {
+        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+        if (pi === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Damage dots
+  damageDots = [];
+  if (currentRibbon >= 0 && data.ribbons[currentRibbon]) {
+    var rib = data.ribbons[currentRibbon];
+    for (var ci = 0; ci < rib.cells.length; ci++) {
+      var cell = rib.cells[ci];
+      var sp = data.splices[cell.splice_idx]; if (!sp) continue;
+      var sx = kmToX(sp.km); if (sx < ML - 5 || sx > ML + cW + 5) continue;
+      for (var ei = 0; ei < cell.entries.length; ei++) {
+        var entry = cell.entries[ei];
+        var trace = data.fiber_traces && data.fiber_traces[String(entry.fnum)];
+        if (!trace) continue;
+        var nearDb = null, nearDist = Infinity;
+        for (var pi = 0; pi < trace.length; pi++) { var d = Math.abs(trace[pi][0] - sp.km); if (d < nearDist) { nearDist = d; nearDb = trace[pi][1]; } }
+        if (nearDb === null || nearDist > 0.5) continue;
+        var dotY = dbToY(nearDb);
+        var color = {'break':'#FF4444','broke':'#FF8800','flagged':'#D63384','bfill':'#0070C0'}[entry.type] || '#e67e22';
+        ctx.beginPath(); ctx.arc(sx, dotY, 5, 0, Math.PI*2); ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        damageDots.push({ x: sx, y: dotY, r: 8, text: entry.text, color: color, fnum: entry.fnum,
+          splice_label: sp.is_bend ? 'Bend at ' + sp.km + 'km' : 'Splice ' + sp.splice_num + ' at ' + sp.km + 'km' });
+      }
+    }
+  }
+
+  // Axes
+  ctx.fillStyle = '#888'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+  var kmStep = (vKmE - vKmS) > 30 ? 10 : (vKmE - vKmS) > 10 ? 5 : 1;
+  for (var km = Math.ceil(vKmS / kmStep) * kmStep; km <= vKmE; km += kmStep) {
+    var x = kmToX(km); if (x >= ML && x <= ML + cW) ctx.fillText('' + km, x, MT + cH + 12);
+  }
+  ctx.fillText('km', ML + cW + 8, MT + cH + 12);
+  ctx.textAlign = 'right';
+  for (var db = Math.ceil(minDb); db <= maxDb; db += 2) { var y = dbToY(db); if (y > MT+5 && y < MT+cH-5) ctx.fillText('' + db, ML - 3, y + 3); }
+  ctx.save(); ctx.translate(10, MT + cH/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center'; ctx.font = '9px sans-serif'; ctx.fillStyle = '#888'; ctx.fillText('dB', 0, 0); ctx.restore();
+
+  var ribNow = currentRibbon >= 0 ? data.ribbons[currentRibbon] : null;
+  ctx.fillStyle = '#1F4E79'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(currentFiber > 0 ? 'Fiber ' + currentFiber : ribNow ? ribNow.tube + ' — F' + ribNow.fibers : '', ML + 3, MT - 6);
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────
+window.addEventListener('load', function() {
+  if (data) document.getElementById('pkm-end').value = Math.round((data.meta && data.meta.span_km) || 75);
+
+  document.getElementById('pfiber-btn').addEventListener('click', function() {
+    if (!data) return;
+    var f = parseInt(document.getElementById('pfiber-input').value);
+    if (f && data.fiber_traces && data.fiber_traces[String(f)]) {
+      currentFiber = f; currentRibbon = Math.floor((f - 1) / data.meta.ribbon_size);
+      document.getElementById('pchart-info').textContent = 'Fiber ' + f;
+      document.getElementById('pheader-label').textContent = 'Fiber ' + f;
+      draw2D();
+    }
+  });
+  document.getElementById('pfiber-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('pfiber-btn').click();
+  });
+  document.getElementById('pribbon-btn').addEventListener('click', function() {
+    currentFiber = -1;
+    if (currentRibbon >= 0 && data) {
+      var r = data.ribbons[currentRibbon];
+      document.getElementById('pchart-info').textContent = r.tube + ' — F' + r.fibers;
+      draw2D();
+    }
+  });
+  document.getElementById('pzoom-btn').addEventListener('click', function() {
+    zoomKmStart = parseFloat(document.getElementById('pkm-start').value);
+    zoomKmEnd   = parseFloat(document.getElementById('pkm-end').value);
+    draw2D();
+  });
+  document.getElementById('preset-zoom').addEventListener('click', function() {
+    zoomKmStart = null; zoomKmEnd = null;
+    document.getElementById('pkm-start').value = 0;
+    document.getElementById('pkm-end').value = Math.round((data && data.meta && data.meta.span_km) || 75);
+    draw2D();
+  });
+
+  var pcanvas = document.getElementById('pcanvas');
+  pcanvas.addEventListener('wheel', function(ev) {
+    ev.preventDefault();
+    var fullKm = getKmRange();
+    var s = zoomKmStart != null ? zoomKmStart : 0;
+    var e = zoomKmEnd   != null ? zoomKmEnd   : fullKm;
+    var range = e - s;
+    if (range < 0.5 && ev.deltaY < 0) return;
+    var rect = pcanvas.getBoundingClientRect();
+    var frac = Math.max(0, Math.min(1, (ev.clientX - rect.left - 45) / (rect.width - 60)));
+    var factor = ev.deltaY > 0 ? 1.15 : 0.85;
+    var newRange = Math.min(fullKm, range * factor);
+    var center = s + range * frac;
+    var ns = center - newRange * frac, ne = center + newRange * (1 - frac);
+    if (ns < 0) { ne -= ns; ns = 0; } if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+    zoomKmStart = Math.max(0, ns); zoomKmEnd = ne;
+    document.getElementById('pkm-start').value = Math.round(zoomKmStart);
+    document.getElementById('pkm-end').value   = Math.round(zoomKmEnd);
+    draw2D();
+  }, { passive: false });
+
+  pcanvas.addEventListener('mousedown', function(ev) {
+    isDragging = true; dragStartX = ev.clientX;
+    dragStartKmS = zoomKmStart != null ? zoomKmStart : 0;
+    dragStartKmE = zoomKmEnd   != null ? zoomKmEnd   : getKmRange();
+    pcanvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', function(ev) {
+    if (!isDragging) return;
+    var rect = pcanvas.getBoundingClientRect();
+    var dx = ev.clientX - dragStartX;
+    var kmPerPx = (dragStartKmE - dragStartKmS) / (rect.width - 60);
+    var dkm = -dx * kmPerPx, fullKm = getKmRange();
+    var ns = dragStartKmS + dkm, ne = dragStartKmE + dkm;
+    if (ns < 0) { ne -= ns; ns = 0; } if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+    zoomKmStart = Math.max(0, ns); zoomKmEnd = ne;
+    document.getElementById('pkm-start').value = Math.round(zoomKmStart);
+    document.getElementById('pkm-end').value   = Math.round(zoomKmEnd);
+    draw2D();
+  });
+  window.addEventListener('mouseup', function() {
+    if (isDragging) { isDragging = false; pcanvas.style.cursor = 'default'; }
+  });
+
+  var tooltip = document.getElementById('ptrace-tooltip');
+  pcanvas.addEventListener('mousemove', function(ev) {
+    if (isDragging) { tooltip.style.display = 'none'; return; }
+    var rect = pcanvas.getBoundingClientRect();
+    var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    var hit = null;
+    for (var i = 0; i < damageDots.length; i++) {
+      var d = damageDots[i], dx = mx - d.x, dy = my - d.y;
+      if (dx*dx + dy*dy <= d.r*d.r) { hit = d; break; }
+    }
+    if (hit) {
+      tooltip.innerHTML = '<b style="color:' + hit.color + '">Fiber ' + hit.fnum + '</b><br>' + hit.splice_label + '<br><span style="font-size:10px;color:#888">' + hit.text + '</span>';
+      tooltip.style.display = 'block';
+      tooltip.style.left = (mx + 15) + 'px'; tooltip.style.top = (my + 15) + 'px';
+    } else { tooltip.style.display = 'none'; }
+  });
+  pcanvas.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
+  window.addEventListener('resize', function() { if (data) draw2D(); });
+  if (data && currentRibbon >= 0) draw2D();
 });
-<\/script></body></html>`);
+
+// ── Sync from main window ─────────────────────────────────────────────────
+window.addEventListener('message', function(ev) {
+  if (!ev.data || ev.data.type !== 'sync') return;
+  if (!data) { try { data = window.opener && window.opener._popupData; } catch(e) {} }
+  if (ev.data.ribbonIdx != null) currentRibbon = ev.data.ribbonIdx;
+  if (ev.data.fiberNum  != null) currentFiber  = ev.data.fiberNum;
+  if (ev.data.zoomStart != null) { zoomKmStart = ev.data.zoomStart; document.getElementById('pkm-start').value = Math.round(zoomKmStart); }
+  if (ev.data.zoomEnd   != null) { zoomKmEnd   = ev.data.zoomEnd;   document.getElementById('pkm-end').value   = Math.round(zoomKmEnd); }
+  highlightKm = ev.data.highlightKm != null ? ev.data.highlightKm : null;
+  if (ev.data.label) {
+    document.getElementById('pchart-info').textContent  = ev.data.label;
+    document.getElementById('pheader-label').textContent = ev.data.label;
+  }
+  draw2D();
+});
+<\/script>
+</body></html>`);
   popupWin.document.close();
   syncPopup();
 };
 
 function syncPopup() {
   if (!popupWin || popupWin.closed) return;
-  const canvas = document.getElementById('trace-canvas');
-  const label = document.getElementById('chart-info')?.textContent || 'OTDR 2D Trace';
-  canvas.toBlob(function(blob) {
-    if (!blob || !popupWin || popupWin.closed) return;
-    createImageBitmap(blob).then(function(bmp) {
-      if (!popupWin || popupWin.closed) { bmp.close(); return; }
-      try {
-        popupWin.postMessage({ type: 'frame', bitmap: bmp, label }, '*', [bmp]);
-      } catch(e) { bmp.close(); }
-    });
-  }, 'image/png');
+  const label = document.getElementById('chart-info')?.textContent || '';
+  popupWin.postMessage({
+    type: 'sync',
+    ribbonIdx: currentRibbon,
+    fiberNum:  currentFiber,
+    zoomStart: zoomKmStart,
+    zoomEnd:   zoomKmEnd,
+    highlightKm,
+    label,
+  }, '*');
 }
 
 let rightCollapsed = false;
