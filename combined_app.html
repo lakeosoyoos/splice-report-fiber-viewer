@@ -26,7 +26,34 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
 .cell-b_only_high { background: #C084FC; color: #1A0033; font-weight: bold; }
 
 #right { width: 55vw; height: 100vh; display: flex; flex-direction: column; }
-#top-panel { height: 100%; position: relative; }
+#right-toolbar {
+  display: flex; gap: 6px; padding: 5px 8px; flex-shrink: 0;
+  background: #1C2526; border-bottom: 2px solid #E8461E;
+}
+.tc-btn {
+  padding: 5px 14px; border: none; border-radius: 3px;
+  background: #E8461E; color: #fff;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.tc-btn:hover { background: #c23610; }
+.tc-btn-outline {
+  padding: 4px 12px; border: 2px solid #E8461E; border-radius: 3px;
+  background: transparent; color: #E8461E;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.tc-btn-outline:hover { background: rgba(232,70,30,0.15); }
+#restore-btn {
+  display: none; position: fixed; right: 0; top: 50%;
+  transform: translateY(-50%); z-index: 200;
+  background: #E8461E; color: #fff; border: none;
+  padding: 16px 5px; cursor: pointer; font-size: 13px; font-weight: 700;
+  border-radius: 4px 0 0 4px; writing-mode: vertical-rl; letter-spacing: 1px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+#restore-btn:hover { background: #c23610; }
+#top-panel { flex: 1; min-height: 0; position: relative; }
 #bot-panel { display: none; }
 #trace-canvas { width: 100%; height: 100%; }
 #topo-3d { width: 100%; height: 100%; }
@@ -58,6 +85,10 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
   <table id="damage-table"><thead><tr id="hdr-row"></tr></thead><tbody id="tbl-body"></tbody></table>
 </div>
 <div id="right">
+  <div id="right-toolbar">
+    <button class="tc-btn" onclick="popoutOpen()">⛶ Pop Out 2D</button>
+    <button class="tc-btn-outline" id="collapse-btn" onclick="collapseToggle()">◀ Collapse 2D</button>
+  </div>
   <div id="top-panel">
     <canvas id="trace-canvas"></canvas>
     <div id="trace-tooltip"></div>
@@ -86,6 +117,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     <div id="topo-tooltip"></div>
   </div>
 </div>
+<button id="restore-btn" onclick="collapseToggle()">▶ 2D</button>
 <div id="setup-screen" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#f8f9fa;z-index:200;display:flex;align-items:center;justify-content:center">
   <div style="background:#fff;border:1px solid #ccc;border-radius:12px;padding:30px 40px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
     <h1 style="color:#1F4E79;font-size:20px;margin-bottom:8px">Splice Report Viewer</h1>
@@ -669,6 +701,9 @@ function draw2D() {
   ctx.fillStyle = '#1F4E79'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
   const t = currentFiber > 0 ? `Fiber ${currentFiber}` : rib ? `${rib.tube} — F${rib.fibers}` : '';
   ctx.fillText(t, ML + 3, MT - 6);
+
+  // Mirror to popup window if open
+  syncPopup();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -954,6 +989,83 @@ window.loadDataAndStart = async function() {
     if (isDragging) { isDragging = false; traceCanvas.style.cursor = 'default'; }
   });
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// POP-OUT + COLLAPSE
+// ═══════════════════════════════════════════════════════════════════════════
+let popupWin = null;
+
+window.popoutOpen = function() {
+  popupWin = window.open('', 'splice-2d-viewer',
+    'width=1400,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+  if (!popupWin) {
+    alert('Pop-out blocked — please allow pop-ups for this site.');
+    return;
+  }
+  popupWin.document.write(`<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><title>OTDR 2D Trace — Splice Viewer</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0d1117; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+#pinfo { background:#1C2526; color:#e0e0e0; font-size:11px;
+         font-family:'Segoe UI',monospace; padding:5px 12px;
+         border-bottom:2px solid #E8461E; flex-shrink:0; }
+#pcanvas { flex:1; display:block; min-height:0; width:100%; background:#fff; }
+</style></head><body>
+<div id="pinfo">Waiting for trace data from main window...</div>
+<canvas id="pcanvas"></canvas>
+<script>
+window.addEventListener('message', function(ev) {
+  if (!ev.data || ev.data.type !== 'frame') return;
+  var canvas = document.getElementById('pcanvas');
+  var bmp = ev.data.bitmap;
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  canvas.getContext('2d').drawImage(bmp, 0, 0);
+  bmp.close();
+  if (ev.data.label) document.getElementById('pinfo').textContent = ev.data.label;
+});
+<\/script></body></html>`);
+  popupWin.document.close();
+  syncPopup();
+};
+
+function syncPopup() {
+  if (!popupWin || popupWin.closed) return;
+  const canvas = document.getElementById('trace-canvas');
+  const label = document.getElementById('chart-info')?.textContent || 'OTDR 2D Trace';
+  canvas.toBlob(function(blob) {
+    if (!blob || !popupWin || popupWin.closed) return;
+    createImageBitmap(blob).then(function(bmp) {
+      if (!popupWin || popupWin.closed) { bmp.close(); return; }
+      try {
+        popupWin.postMessage({ type: 'frame', bitmap: bmp, label }, '*', [bmp]);
+      } catch(e) { bmp.close(); }
+    });
+  }, 'image/png');
+}
+
+let rightCollapsed = false;
+window.collapseToggle = function() {
+  rightCollapsed = !rightCollapsed;
+  const right = document.getElementById('right');
+  const left  = document.getElementById('left');
+  const btn   = document.getElementById('collapse-btn');
+  const restore = document.getElementById('restore-btn');
+  if (rightCollapsed) {
+    right.style.display = 'none';
+    left.style.width = '100vw';
+    if (restore) restore.style.display = 'block';
+    if (btn) btn.textContent = '▶ Show 2D';
+  } else {
+    right.style.display = 'flex';
+    right.style.width = '55vw';
+    left.style.width = '45vw';
+    if (restore) restore.style.display = 'none';
+    if (btn) btn.textContent = '◀ Collapse 2D';
+    requestAnimationFrame(function() { draw2D(); });
+  }
+};
+
 // Don't auto-start — wait for setup screen to call loadDataAndStart()
 // But if running in browser (not pywebview), auto-check for existing data
 if (!window.pywebview) {

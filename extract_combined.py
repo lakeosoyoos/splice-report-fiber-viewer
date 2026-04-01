@@ -53,26 +53,54 @@ def compute_fiber_topo(trace, dist, dx_km, noise_km, step_km=0.5, window_km=1.0)
 
 
 def fiber_dist_array(r):
-    """Return (trace, dist_array, dx_km, noise_km) from a parse_sor_full dict."""
+    """Return (trace, dist_array, dx_km, noise_km) from a parse_sor_full dict.
+
+    r['trace'] is the native SOR DataPts trace (NOT EXFO RawSamples).
+    Its correct dx uses acq_range and the file IOR, derived from event calibration:
+      dx_km = 2 * acq_range * event_dist_km / (event_time_of_travel * full_points)
+    This formula cancels IOR so the trace distances stay self-consistent with
+    the event dist_km values already computed from the same IOR in the SOR reader.
+    """
     trace = r.get('trace')
     if trace is None:
         return None, None, None, None
     full_points = r.get('full_points', len(trace))
     if full_points <= 0:
         return None, None, None, None
-    # acq_range is NOT in km — use exfo_sampling_period for correct dx
-    _C = 2.998e8   # m/s speed of light
-    _IOR = 1.4682  # typical single-mode IOR
-    sp = r.get('exfo_sampling_period', 0)
-    if sp <= 0:
-        return None, None, None, None
-    dx_km = sp * _C / (2 * _IOR) / 1000.0
+
+    acq_range = r.get('acq_range', 0)
+    events = r.get('events', [])
+    dx_km = None
+
+    # Preferred: calibrate dx from a mid-span non-end event (most accurate)
+    if acq_range > 0:
+        cal = [e for e in events
+               if e.get('time_of_travel', 0) > 0 and e.get('dist_km', 0) > 1.0
+               and not e.get('is_end')]
+        if not cal:
+            cal = [e for e in events
+                   if e.get('time_of_travel', 0) > 0 and e.get('dist_km', 0) > 0
+                   and not e.get('is_end')]
+        if cal:
+            e = cal[len(cal) // 2]
+            dx_km = (2.0 * acq_range * e['dist_km']
+                     / (e['time_of_travel'] * full_points))
+
+    # Fallback: exfo_sampling_period (less accurate — different trace sampling)
+    if not dx_km or dx_km <= 0:
+        _C = 2.998e8
+        _IOR = 1.4682
+        sp = r.get('exfo_sampling_period', 0)
+        if sp <= 0:
+            return None, None, None, None
+        dx_km = sp * _C / (2 * _IOR) / 1000.0
+
     start_km = r.get('start_index', 0) * dx_km
     n = len(trace)
     dist = np.linspace(start_km, start_km + n * dx_km, n)
     # noise_km: use end event dist
     noise_km = start_km + n * dx_km
-    for e in r.get('events', []):
+    for e in events:
         if e.get('is_end'):
             noise_km = min(float(e['dist_km']), noise_km)
             break
