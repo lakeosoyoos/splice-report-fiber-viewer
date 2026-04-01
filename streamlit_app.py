@@ -160,6 +160,32 @@ button[data-testid="stBaseButton-headerNoPadding"] { display: none !important; }
 }
 [data-baseweb="radio"] [role="radio"] div { border-color: #E8461E !important; }
 a { color: #E8461E !important; }
+
+/* ── Cards ── */
+.tc-card {
+    background: #ffffff; border: 1px solid #e5e5e5;
+    border-top: 4px solid #E8461E; border-radius: 4px;
+    padding: 24px 26px; margin-bottom: 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+.tc-card-title {
+    font-family: 'Nunito', sans-serif; font-size: 16px;
+    font-weight: 900; color: #1a1a1a; margin-bottom: 12px; letter-spacing: -0.1px;
+}
+.tc-list { list-style: none; padding: 0; margin: 0; }
+.tc-list li {
+    font-family: 'Nunito', sans-serif; font-size: 14px; font-weight: 600;
+    color: #333; padding: 4px 0; display: flex; gap: 10px;
+    align-items: flex-start; line-height: 1.5;
+}
+.tc-list li::before { content: "▸"; color: #E8461E; font-weight: 900; font-size: 14px; margin-top: 2px; }
+.tc-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.tc-pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
+    border-radius: 3px; font-family: 'Nunito', sans-serif; font-size: 12px;
+    font-weight: 700; background: #f5f5f5; border: 1px solid #ddd; color: #333;
+}
+.tc-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -651,6 +677,57 @@ else:
                   color:rgba(255,255,255,0.88);margin:0;font-weight:600;">
             Upload A and B direction SOR files to generate the interactive viewer
         </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="display:flex; gap:18px; align-items:stretch; margin-bottom:18px;">
+        <div class="tc-card" style="flex:1;">
+            <div class="tc-card-title">Pass 1 — Splice Position Analysis</div>
+            <ul class="tc-list">
+                <li>Discovers splice closure positions where 20+ fibers share an event</li>
+                <li>Finds A+B bidirectional events and flags if loss &ge; threshold</li>
+                <li>Detects broke fibers (mid-span trace termination)</li>
+                <li>Fills B-direction data past breaks where A is blind</li>
+                <li>Flags A-only events with estimated bidir = A / 2</li>
+            </ul>
+        </div>
+        <div class="tc-card" style="flex:1;">
+            <div class="tc-card-title">Pass 2 — B-Direction Event Scan</div>
+            <ul class="tc-list">
+                <li>Scans every B-direction event above threshold not caught in Pass 1</li>
+                <li>Converts B-frame positions to A-frame coordinates</li>
+                <li>Matches to nearest splice position within 1.5 km</li>
+                <li>If A event also found: computes true bidirectional average</li>
+                <li>If no A event: flags as B-only with estimated bidir = B / 2</li>
+                <li>Catches events regardless of which direction saw it first</li>
+            </ul>
+        </div>
+    </div>
+    <div style="display:flex; gap:18px; align-items:stretch; margin-bottom:18px;">
+        <div class="tc-card" style="flex:1;">
+            <div class="tc-card-title">How To Use</div>
+            <ul class="tc-list">
+                <li>Upload A-direction SOR files (required) and B-direction (optional) as a ZIP or individual files</li>
+                <li>Adjust the reburn threshold if needed — default is 0.150 dB</li>
+                <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the viewer</li>
+                <li>Click <strong>Generate Viewer</strong> to launch the interactive splice table and 2D OTDR trace</li>
+                <li>Use <strong>Pop Out 2D</strong> to open the trace on a second monitor, then <strong>&#9658; Collapse 2D</strong> to go full-width on the table</li>
+            </ul>
+        </div>
+        <div class="tc-card" style="flex:1;">
+            <div class="tc-card-title">Viewer Color Key</div>
+            <div class="tc-legend">
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink — A+B Reburn</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red — Break</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange — Broke</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue — B-fill</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow — A-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold — A-only &#9888;</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender — B-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple — B-only &#9888;</span>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
