@@ -588,23 +588,16 @@ if st.session_state.get("done") and st.session_state.viewer_html:
     </style>
     """, unsafe_allow_html=True)
 
-    # Orange bar + return button
-    col_bar, col_btn = st.columns([5, 1])
-    with col_bar:
-        st.markdown("""
-        <div style="background:#E8461E; height:38px; border-radius:3px;
-                    display:flex; align-items:center; padding:0 16px;">
-            <span style="color:#fff; font-family:'Nunito',sans-serif;
-                         font-weight:800; font-size:13px; letter-spacing:0.2px;">
-                Splice Report + Fiber Viewer
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
+    # Return button left-aligned, then full-width orange line
+    col_btn, _ = st.columns([1, 5])
     with col_btn:
         if st.button("← Return to Main Page", type="primary", use_container_width=True):
             st.session_state.done = None
             st.session_state.viewer_html = None
             st.rerun()
+    st.markdown("""
+    <div style="background:#E8461E; height:3px; width:100%; margin:4px 0 6px 0;"></div>
+    """, unsafe_allow_html=True)
 
     components.html(st.session_state.viewer_html, height=860, scrolling=False)
 
