@@ -348,15 +348,16 @@ function buildTable() {
           currentRibbon = rib.ribbon - 1; currentFiber = -1;
           document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
         }
+        // Zoom in tight to ±2 km around this splice so events are clearly visible
         highlightKm = sp.km;
         const fullKm = getKmRange();
-        const s = zoomKmStart ?? 0, e = zoomKmEnd ?? fullKm, range = e - s;
-        let ns = sp.km - range/2, ne = sp.km + range/2;
+        const zoomHalf = 2.0;
+        let ns = sp.km - zoomHalf, ne = sp.km + zoomHalf;
         if (ns < 0) { ne -= ns; ns = 0; }
         if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
         zoomKmStart = Math.max(0, ns); zoomKmEnd = ne;
-        document.getElementById('km-start').value = Math.round(zoomKmStart);
-        document.getElementById('km-end').value = Math.round(zoomKmEnd);
+        document.getElementById('km-start').value = ns.toFixed(1);
+        document.getElementById('km-end').value = ne.toFixed(1);
         draw2D();
       });
       tr.appendChild(td);
