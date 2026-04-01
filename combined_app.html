@@ -87,7 +87,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
 <div id="right">
   <div id="right-toolbar">
     <button class="tc-btn" onclick="popoutOpen()">⛶ Pop Out 2D</button>
-    <button class="tc-btn-outline" id="collapse-btn" onclick="collapseToggle()">◀ Collapse 2D</button>
+    <button class="tc-btn-outline" id="collapse-btn" onclick="collapseToggle()">▶ Collapse 2D</button>
   </div>
   <div id="top-panel">
     <canvas id="trace-canvas"></canvas>
@@ -1393,7 +1393,7 @@ window.collapseToggle = function() {
     right.style.width = '55vw';
     left.style.width = '45vw';
     if (restore) restore.style.display = 'none';
-    if (btn) btn.textContent = '◀ Collapse 2D';
+    if (btn) btn.textContent = '▶ Collapse 2D';
     requestAnimationFrame(function() { draw2D(); });
   }
 };
