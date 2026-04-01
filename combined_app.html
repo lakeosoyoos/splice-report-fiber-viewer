@@ -321,6 +321,14 @@ function buildTable() {
       td.addEventListener('click', () => {
         const sp = data.splices[cell.splice_idx];
         if (!sp) return;
+        // Select this ribbon if not already selected
+        if (currentRibbon !== rib.ribbon - 1) {
+          document.querySelectorAll('.ribbon-label').forEach(e => e.classList.remove('active'));
+          td0.classList.add('active');
+          currentRibbon = rib.ribbon - 1; currentFiber = -1;
+          document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
+          buildTopo();
+        }
         highlightKm = sp.km;
         const fullKm = getKmRange();
         const s = zoomKmStart ?? 0, e = zoomKmEnd ?? fullKm, range = e - s;
