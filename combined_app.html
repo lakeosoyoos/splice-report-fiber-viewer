@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Splice Report + Trace + Topo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; display: flex; }
+
+#left { width: 45vw; height: 100vh; overflow-y: auto; overflow-x: auto; border-right: 2px solid #1F4E79; background: #fafafa; }
+#left h2 { position: sticky; top: 0; z-index: 10; background: #1F4E79; color: #fff; padding: 6px 10px; font-size: 12px; margin: 0; }
+#damage-table { width: 100%; border-collapse: collapse; font-size: 9px; font-family: 'Consolas', monospace; }
+#damage-table th { background: #1F4E79; color: #fff; padding: 3px 5px; font-size: 8px; position: sticky; top: 28px; z-index: 5; text-align: center; border: 0.5px solid #163d5e; white-space: nowrap; cursor: pointer; }
+#damage-table th.bend-hdr { background: #FFD700; color: #5a4a00; }
+#damage-table td { padding: 2px 4px; border: 0.5px solid #ddd; vertical-align: top; white-space: pre-line; line-height: 1.2; cursor: pointer; font-size: 8px; }
+.ribbon-label { font-weight: 600; font-size: 9px; white-space: nowrap; cursor: pointer; background: #f0f4f8; }
+.ribbon-label:hover { background: #d0e4f4; }
+.ribbon-label.active { background: #1F4E79; color: #fff; }
+.cell-break    { background: #FF4444; color: #fff; font-weight: bold; }
+.cell-broke    { background: #FF8800; color: #fff; font-weight: bold; }
+.cell-flagged  { background: #FFC7CE; }
+.cell-bfill    { background: #BDD7EE; color: #1F4E79; }
+.cell-a_only   { background: #FFF2CC; color: #7F6000; }
+.cell-a_only_high { background: #FFD700; color: #4B3000; font-weight: bold; }
+.cell-b_only   { background: #E8D5F5; color: #4B0082; }
+.cell-b_only_high { background: #C084FC; color: #1A0033; font-weight: bold; }
+
+#right { width: 55vw; height: 100vh; display: flex; flex-direction: column; }
+#top-panel { height: 50%; position: relative; border-bottom: 1px solid #ccc; }
+#bot-panel { height: 50%; position: relative; }
+#trace-canvas { width: 100%; height: 100%; }
+#topo-3d { width: 100%; height: 100%; }
+
+#controls {
+  position: absolute; top: 4px; right: 4px; background: rgba(255,255,255,0.92); border: 1px solid #ccc;
+  border-radius: 5px; padding: 6px 8px; font-size: 10px; z-index: 10; width: 150px;
+}
+#controls h3 { font-size: 10px; color: #1F4E79; margin-bottom: 3px; }
+#controls .lbl { font-size: 9px; color: #888; margin: 3px 0 1px; }
+#fiber-input { width: 100%; padding: 3px; border: 1px solid #ccc; border-radius: 2px; font-size: 10px; font-family: monospace; }
+.btn { width: 100%; padding: 3px; margin: 2px 0; border: 1px solid #1F4E79; border-radius: 2px; background: #f0f4f8; color: #1F4E79; font-size: 9px; font-weight: bold; cursor: pointer; }
+.btn:hover { background: #d0e4f4; }
+#chart-info { font-size: 9px; color: #1F4E79; margin-top: 4px; font-weight: 600; }
+
+#trace-tooltip, #topo-tooltip {
+  position: absolute; display: none; background: rgba(255,255,255,0.95); border: 1px solid #1F4E79;
+  border-radius: 3px; padding: 4px 7px; font-size: 10px; pointer-events: none; z-index: 20;
+}
+
+#loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  background: rgba(255,255,255,0.95); border: 1px solid #ccc; border-radius: 8px; padding: 20px 40px; z-index: 100; }
+#loading h2 { color: #1F4E79; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="left">
+  <h2 id="table-title">Splice Report</h2>
+  <table id="damage-table"><thead><tr id="hdr-row"></tr></thead><tbody id="tbl-body"></tbody></table>
+</div>
+<div id="right">
+  <div id="top-panel">
+    <canvas id="trace-canvas"></canvas>
+    <div id="trace-tooltip"></div>
+    <div id="controls">
+      <h3>Controls</h3>
+      <div id="chart-info">Click a ribbon</div>
+      <div class="lbl">Fiber #</div>
+      <input type="text" id="fiber-input" placeholder="e.g. 49">
+      <button class="btn" id="fiber-btn">Show Fiber</button>
+      <button class="btn" id="ribbon-btn" style="border-color:#999;color:#666">Full Ribbon</button>
+      <div class="lbl">2D Zoom (km)</div>
+      <div style="display:flex;gap:3px">
+        <input type="number" id="km-start" value="0" min="0" step="1" style="width:45px;padding:2px;border:1px solid #ccc;border-radius:2px;font-size:9px">
+        <span style="color:#888;font-size:9px">to</span>
+        <input type="number" id="km-end" value="75" min="0" step="1" style="width:45px;padding:2px;border:1px solid #ccc;border-radius:2px;font-size:9px">
+      </div>
+      <button class="btn" id="zoom-btn">Zoom</button>
+      <button class="btn" id="reset-zoom" style="border-color:#999;color:#666">Reset Zoom</button>
+      <div class="lbl">3D Vertical Scale</div>
+      <input type="range" id="v-scale" min="1" max="50" value="1" style="width:100%">
+      <div style="text-align:center;font-size:9px;color:#888"><b id="v-label">1x</b></div>
+    </div>
+  </div>
+  <div id="bot-panel">
+    <div id="topo-3d"></div>
+    <div id="topo-tooltip"></div>
+  </div>
+</div>
+<div id="setup-screen" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#f8f9fa;z-index:200;display:flex;align-items:center;justify-content:center">
+  <div style="background:#fff;border:1px solid #ccc;border-radius:12px;padding:30px 40px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+    <h1 style="color:#1F4E79;font-size:20px;margin-bottom:8px">Splice Report Viewer</h1>
+    <p style="color:#888;font-size:12px;margin-bottom:20px">Select A and B direction SOR folders to analyze</p>
+
+    <div style="text-align:left;margin-bottom:15px">
+      <div style="font-size:11px;color:#666;margin-bottom:3px">A-Direction folder:</div>
+      <div style="display:flex;gap:6px">
+        <input id="dir-a" readonly style="flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:11px;background:#f8f9fa" placeholder="Click Browse...">
+        <button onclick="pickFolder('a')" style="padding:6px 12px;background:#1F4E79;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">Browse</button>
+      </div>
+    </div>
+
+    <div style="text-align:left;margin-bottom:15px">
+      <div style="font-size:11px;color:#666;margin-bottom:3px">B-Direction folder:</div>
+      <div style="display:flex;gap:6px">
+        <input id="dir-b" readonly style="flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:11px;background:#f8f9fa" placeholder="Click Browse...">
+        <button onclick="pickFolder('b')" style="padding:6px 12px;background:#1F4E79;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">Browse</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;text-align:left;margin-bottom:20px">
+      <div style="flex:1">
+        <div style="font-size:11px;color:#666;margin-bottom:3px">Site A name:</div>
+        <input id="site-a" value="A" style="width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:11px">
+      </div>
+      <div style="flex:1">
+        <div style="font-size:11px;color:#666;margin-bottom:3px">Site B name:</div>
+        <input id="site-b" value="B" style="width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:11px">
+      </div>
+    </div>
+
+    <button id="run-btn" onclick="runAnalysis()" style="width:100%;padding:10px;background:#1F4E79;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:bold;cursor:pointer">Analyze</button>
+    <div id="setup-status" style="margin-top:10px;font-size:11px;color:#888"></div>
+
+    <div style="margin-top:15px;border-top:1px solid #eee;padding-top:10px">
+      <button id="load-existing-btn" onclick="loadExisting()" style="background:none;border:1px solid #ccc;border-radius:4px;padding:6px 12px;color:#666;font-size:11px;cursor:pointer">Load previous results</button>
+    </div>
+  </div>
+</div>
+<div id="loading" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:8px;padding:20px 40px;z-index:100"><h2 style="color:#1F4E79;font-size:14px">Extracting data...</h2><p id="loading-msg" style="font-size:11px;color:#888">This may take a minute</p></div>
+
+<script>
+// Folder picker bridge to pywebview
+async function pickFolder(which) {
+  try {
+    const folder = await window.pywebview.api.select_folder(
+      which === 'a' ? 'Select A-direction SOR folder' : 'Select B-direction SOR folder');
+    if (folder) {
+      document.getElementById('dir-' + which).value = folder;
+      // Auto-detect site name from folder name
+      const name = folder.split('/').pop();
+      const input = document.getElementById('site-' + which);
+      if (input.value === 'A' || input.value === 'B') {
+        // Try to extract a short site code
+        const match = name.match(/^([A-Z]{2,4})/i);
+        if (match) input.value = match[1].toUpperCase();
+      }
+    }
+  } catch (e) {
+    document.getElementById('setup-status').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function runAnalysis() {
+  const dirA = document.getElementById('dir-a').value;
+  const dirB = document.getElementById('dir-b').value;
+  const siteA = document.getElementById('site-a').value || 'A';
+  const siteB = document.getElementById('site-b').value || 'B';
+  if (!dirA || !dirB) {
+    document.getElementById('setup-status').textContent = 'Please select both folders';
+    return;
+  }
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-btn').textContent = 'Extracting...';
+  document.getElementById('setup-status').textContent = 'Running extraction — this may take a minute...';
+  document.getElementById('loading').style.display = 'block';
+
+  try {
+    const result = await window.pywebview.api.run_extraction(dirA, dirB, siteA, siteB);
+    if (result.status === 'ok') {
+      document.getElementById('setup-screen').style.display = 'none';
+      document.getElementById('loading').style.display = 'none';
+      loadDataAndStart();
+    } else {
+      document.getElementById('setup-status').textContent = 'Error: ' + result.message;
+      document.getElementById('run-btn').disabled = false;
+      document.getElementById('run-btn').textContent = 'Analyze';
+      document.getElementById('loading').style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('setup-status').textContent = 'Error: ' + e.message;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-btn').textContent = 'Analyze';
+    document.getElementById('loading').style.display = 'none';
+  }
+}
+
+async function loadExisting() {
+  try {
+    const hasData = await window.pywebview.api.has_data();
+    if (hasData) {
+      document.getElementById('setup-screen').style.display = 'none';
+      loadDataAndStart();
+    } else {
+      document.getElementById('setup-status').textContent = 'No previous results found. Run an analysis first.';
+    }
+  } catch (e) {
+    // Not running in pywebview — try loading from static file
+    document.getElementById('setup-screen').style.display = 'none';
+    loadDataAndStart();
+  }
+}
+</script>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+let data;
+let currentRibbon = -1, currentFiber = -1, highlightKm = null;
+let scene, camera, renderer, controls, topoGroup;
+let vScale = 1;
+let zoomKmStart = null, zoomKmEnd = null;  // null = full span
+let isDragging = false, dragStartX = 0, dragStartKmS = 0, dragStartKmE = 0;
+
+function drawFiberHighlight(fnum, color) {
+  const p = window._highlightParams;
+  if (!p) return;
+  const trace = data.fiber_traces?.[String(fnum)];
+  if (!trace) return;
+  // Draw directly on the canvas using the stored coordinate functions
+  // The canvas is already scaled from draw2D — use ctx directly
+  const canvas = document.getElementById('trace-canvas');
+  const ctx2 = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio;
+  ctx2.save();
+  ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);  // reset to clean DPR scale
+  ctx2.strokeStyle = color;
+  ctx2.lineWidth = p.lw;
+  ctx2.beginPath();
+  let started = false;
+  for (const [km, db] of trace) {
+    const x = p.kmToX(km);
+    const y = p.dbToY(db);
+    if (!started) { ctx2.moveTo(x, y); started = true; }
+    else ctx2.lineTo(x, y);
+  }
+  ctx2.stroke();
+  ctx2.restore();
+}
+let damageDots = [];  // [{x, y, r, text, color}] for hover detection
+
+function getKmRange() {
+  if (!data) return 75;
+  let maxKm = 0;
+  const fibers = currentFiber > 0 ? [currentFiber] :
+    currentRibbon >= 0 ? Array.from({length: data.meta.ribbon_size}, (_, i) => data.ribbons[currentRibbon].f_start + i) : [];
+  for (const f of fibers) {
+    const t = data.fiber_traces?.[String(f)];
+    if (t) { const last = t[t.length-1][0]; if (last > maxKm) maxKm = last; }
+  }
+  return maxKm || data.meta.span_km;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TABLE
+// ═══════════════════════════════════════════════════════════════════════════
+function buildTable() {
+  const hdr = document.getElementById('hdr-row');
+  const body = document.getElementById('tbl-body');
+  document.getElementById('table-title').textContent = `${data.meta.site_a} to ${data.meta.site_b}`;
+  let h = '<th>Ribbon</th>';
+  for (let si = 0; si < data.splices.length; si++) {
+    const sp = data.splices[si];
+    const cls = sp.is_bend ? ' class="bend-hdr"' : '';
+    h += `<th${cls} data-si="${si}">${sp.is_bend ? 'B' : 'S'+sp.splice_num}<br>${sp.km}km</th>`;
+  }
+  hdr.innerHTML = h;
+  hdr.querySelectorAll('th[data-si]').forEach(th => {
+    th.addEventListener('click', () => {
+      const sp = data.splices[+th.dataset.si];
+      highlightKm = sp.km;
+      // Pan the current zoom window to center on this splice
+      const fullKm = getKmRange();
+      const s = zoomKmStart ?? 0;
+      const e = zoomKmEnd ?? fullKm;
+      const range = e - s;
+      let ns = sp.km - range / 2;
+      let ne = sp.km + range / 2;
+      if (ns < 0) { ne -= ns; ns = 0; }
+      if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+      zoomKmStart = Math.max(0, ns);
+      zoomKmEnd = ne;
+      document.getElementById('km-start').value = Math.round(zoomKmStart);
+      document.getElementById('km-end').value = Math.round(zoomKmEnd);
+      draw2D();
+    });
+  });
+  for (const rib of data.ribbons) {
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    td0.className = 'ribbon-label';
+    td0.textContent = `${rib.tube} (${rib.fibers})`;
+    td0.addEventListener('click', () => {
+      document.querySelectorAll('.ribbon-label').forEach(e => e.classList.remove('active'));
+      td0.classList.add('active');
+      currentRibbon = rib.ribbon - 1; currentFiber = -1;
+      document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
+      draw2D(); buildTopo();
+    });
+    tr.appendChild(td0);
+    for (const cell of rib.cells) {
+      const td = document.createElement('td');
+      if (cell.entries.length) {
+        const types = cell.entries.map(e => e.type);
+        if (types.includes('break'))            td.className = 'cell-break';
+        else if (types.includes('broke'))       td.className = 'cell-broke';
+        else if (types.includes('bfill'))       td.className = 'cell-bfill';
+        else if (types.includes('flagged'))     td.className = 'cell-flagged';
+        else if (types.includes('b_only_high')) td.className = 'cell-b_only_high';
+        else if (types.includes('b_only'))      td.className = 'cell-b_only';
+        else if (types.includes('a_only_high')) td.className = 'cell-a_only_high';
+        else if (types.includes('a_only'))      td.className = 'cell-a_only';
+        td.textContent = cell.entries.map(e => e.text).join('\n');
+      }
+      td.addEventListener('click', () => {
+        const sp = data.splices[cell.splice_idx];
+        if (!sp) return;
+        highlightKm = sp.km;
+        const fullKm = getKmRange();
+        const s = zoomKmStart ?? 0, e = zoomKmEnd ?? fullKm, range = e - s;
+        let ns = sp.km - range/2, ne = sp.km + range/2;
+        if (ns < 0) { ne -= ns; ns = 0; }
+        if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+        zoomKmStart = Math.max(0, ns); zoomKmEnd = ne;
+        document.getElementById('km-start').value = Math.round(zoomKmStart);
+        document.getElementById('km-end').value = Math.round(zoomKmEnd);
+        draw2D();
+      });
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2D TRACE (top right) — raw dB like EXFO
+// ═══════════════════════════════════════════════════════════════════════════
+function draw2D() {
+  const panel = document.getElementById('top-panel');
+  const canvas = document.getElementById('trace-canvas');
+  const dpr = window.devicePixelRatio;
+  canvas.width = panel.clientWidth * dpr;
+  canvas.height = panel.clientHeight * dpr;
+  canvas.style.width = panel.clientWidth + 'px';
+  canvas.style.height = panel.clientHeight + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = panel.clientWidth, H = panel.clientHeight;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+
+  const rs = data.meta.ribbon_size;
+  let fibers = [];
+  if (currentFiber > 0) fibers = [currentFiber];
+  else if (currentRibbon >= 0) {
+    const rib = data.ribbons[currentRibbon];
+    for (let f = rib.f_start; f <= rib.f_end; f++) fibers.push(f);
+  } else return;
+
+  // Find ranges from ALL data (not just zoom window) for consistent dB scale
+  let globalMinDb = Infinity, globalMaxDb = -Infinity, globalMaxKm = 0;
+  for (const f of fibers) {
+    const t = data.fiber_traces?.[String(f)];
+    if (!t) continue;
+    for (const [km, db] of t) {
+      if (db < globalMinDb) globalMinDb = db;
+      if (db > globalMaxDb) globalMaxDb = db;
+      if (km > globalMaxKm) globalMaxKm = km;
+    }
+  }
+  if (globalMaxKm === 0) return;
+
+  // Apply zoom range
+  const viewKmStart = zoomKmStart ?? 0;
+  const viewKmEnd = zoomKmEnd ?? globalMaxKm;
+
+  // Find dB range within zoom window
+  let minDb = Infinity, maxDb = -Infinity;
+  for (const f of fibers) {
+    const t = data.fiber_traces?.[String(f)];
+    if (!t) continue;
+    for (const [km, db] of t) {
+      if (km >= viewKmStart && km <= viewKmEnd) {
+        if (db < minDb) minDb = db;
+        if (db > maxDb) maxDb = db;
+      }
+    }
+  }
+  if (minDb === Infinity) { minDb = globalMinDb; maxDb = globalMaxDb; }
+  const dbPad = (maxDb - minDb) * 0.05;
+  minDb -= dbPad; maxDb += dbPad;
+
+  const ML = 45, MR = 15, MT = 20, MB = 30;
+  const cW = W - ML - MR, cH = H - MT - MB;
+  const kmToX = km => ML + ((km - viewKmStart) / (viewKmEnd - viewKmStart)) * cW;
+  const dbToY = db => MT + ((maxDb - db) / (maxDb - minDb)) * cH;
+
+  // Grid
+  ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.5;
+  for (let km = 0; km <= viewKmEnd; km += 10) { const x = kmToX(km); if (x >= ML && x <= ML+cW) { ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT+cH); ctx.stroke(); } }
+  for (let db = Math.ceil(minDb); db <= maxDb; db += 2) { const y = dbToY(db); ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML+cW, y); ctx.stroke(); }
+
+  // Splice markers
+  for (const sp of data.splices) {
+    const x = kmToX(sp.km);
+    const isHl = highlightKm && Math.abs(sp.km - highlightKm) < 0.1;
+    ctx.strokeStyle = sp.is_bend ? (isHl ? 'rgba(230,126,34,0.7)' : 'rgba(230,126,34,0.2)')
+                                 : (isHl ? 'rgba(31,78,121,0.6)' : 'rgba(93,173,226,0.2)');
+    ctx.lineWidth = isHl ? 2.5 : 1;
+    ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT+cH); ctx.stroke();
+    ctx.fillStyle = sp.is_bend ? '#e67e22' : '#1F4E79';
+    ctx.font = `${isHl ? 'bold ' : ''}9px sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText(sp.is_bend ? 'B' : `S${sp.splice_num}`, x, MT - 4);
+  }
+
+  // Grey shades
+  const greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
+
+  // Draw traces
+  for (let fi = 0; fi < fibers.length; fi++) {
+    const fnum = fibers[fi];
+    const trace = data.fiber_traces?.[String(fnum)];
+    if (!trace || trace.length < 2) continue;
+    const isBroken = !!data.breaks[String(fnum)];
+    const brk = data.breaks[String(fnum)];
+    const lw = fibers.length === 1 ? 1.8 : 0.8;
+
+    if (isBroken && brk) {
+      // Draw healthy portion in grey up to break
+      ctx.strokeStyle = greys[fi % greys.length];
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      let started = false;
+      for (const [km, db] of trace) {
+        if (km > brk.km) break;
+        const x = kmToX(km), y = dbToY(db);
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Draw break cliff + noise floor in RED
+      ctx.strokeStyle = '#FF4444';
+      ctx.lineWidth = lw + 0.5;
+      ctx.beginPath();
+      started = false;
+      for (const [km, db] of trace) {
+        if (km < brk.km - 0.5) continue;  // start just before break
+        const x = kmToX(km), y = dbToY(db);
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Break label
+      const bx = kmToX(brk.km);
+      const breakPt = trace.find(t => t[0] >= brk.km);
+      const by = breakPt ? dbToY(breakPt[1]) : MT + 10;
+      ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(`F${fnum} ${brk.type}`, bx + 3, by - 5);
+
+      // Red dot at break point
+      ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#FF4444'; ctx.fill();
+    } else {
+      // Healthy fiber — all grey
+      ctx.strokeStyle = greys[fi % greys.length];
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      for (let i = 0; i < trace.length; i++) {
+        const x = kmToX(trace[i][0]), y = dbToY(trace[i][1]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // ── Gainer/Loser markers at each splice ──────────────────────────────────
+  // For each fiber at each splice, find the dB step and draw:
+  //   Green triangle UP = gainer (apparent gain from mode-field mismatch)
+  //   Red/pink triangle DOWN = loser (real loss)
+  for (const sp of data.splices) {
+    if (sp.is_bend) continue; // skip bend zones
+    const sx = kmToX(sp.km);
+    if (sx < ML || sx > ML + cW) continue; // off screen
+
+    for (let fi = 0; fi < fibers.length; fi++) {
+      const fnum = fibers[fi];
+      const trace = data.fiber_traces?.[String(fnum)];
+      if (!trace || trace.length < 4) continue;
+      if (data.breaks[String(fnum)]) continue; // skip broken fibers
+
+      // Measure the step at this splice from the high-res trace
+      // Use points 0.1-0.3 km before and after the splice (skip the dead zone)
+      let beforeDb = null, afterDb = null;
+      let bSum = 0, bCnt = 0, aSum = 0, aCnt = 0;
+      for (const [km, db] of trace) {
+        const dist = km - sp.km;
+        if (dist >= -0.3 && dist < -0.05) { bSum += db; bCnt++; }
+        if (dist > 0.05 && dist <= 0.3) { aSum += db; aCnt++; }
+      }
+      if (bCnt >= 2 && aCnt >= 2) {
+        beforeDb = bSum / bCnt;
+        afterDb = aSum / aCnt;
+      }
+      if (beforeDb === null || afterDb === null) continue;
+
+      const stepDb = beforeDb - afterDb; // positive = loss, negative = gain
+      if (Math.abs(stepDb) < 0.03) continue; // below noise floor
+
+      const y = dbToY((beforeDb + afterDb) / 2);
+      const size = Math.min(6, Math.max(2.5, Math.abs(stepDb) * 8));
+
+      if (stepDb > 0) {
+        // LOSER — red/pink triangle pointing down
+        ctx.fillStyle = stepDb > 0.15 ? '#FF4444' : '#FFC7CE';
+        ctx.beginPath();
+        ctx.moveTo(sx - size, y - size);
+        ctx.lineTo(sx + size, y - size);
+        ctx.lineTo(sx, y + size);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // GAINER — green triangle pointing up
+        ctx.fillStyle = stepDb < -0.15 ? '#27ae60' : '#a9dfbf';
+        ctx.beginPath();
+        ctx.moveTo(sx - size, y + size);
+        ctx.lineTo(sx + size, y + size);
+        ctx.lineTo(sx, y - size);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  // ── Damage dots from tech report ─────────────────────────────────────────
+  // For each fiber+splice that has an entry in the damage table, draw a dot
+  // on the trace at that position. Color matches the damage table cell.
+  damageDots = [];
+  if (currentRibbon >= 0) {
+    const rib = data.ribbons[currentRibbon];
+    for (const cell of rib.cells) {
+      const sp = data.splices[cell.splice_idx];
+      if (!sp) continue;
+      const sx = kmToX(sp.km);
+      if (sx < ML - 5 || sx > ML + cW + 5) continue;
+
+      for (const entry of cell.entries) {
+        const fnum = entry.fnum;
+        const trace = data.fiber_traces?.[String(fnum)];
+        if (!trace) continue;
+
+        // Find dB at this splice position — only if trace actually covers this km
+        let nearestDb = null, nearestDist = Infinity;
+        for (const [km, db] of trace) {
+          const d = Math.abs(km - sp.km);
+          if (d < nearestDist) { nearestDist = d; nearestDb = db; }
+        }
+        // Skip if the nearest trace point is more than 0.5 km away
+        // (means the fiber's trace doesn't reach this splice)
+        if (nearestDb === null || nearestDist > 0.5) continue;
+
+        const y = dbToY(nearestDb);
+        const dotR = 5;
+
+        // Color and category by entry type (matching damage table)
+        let color, category;
+        switch (entry.type) {
+          case 'break':
+            color = '#FF4444'; category = 'BREAK'; break;
+          case 'broke':
+            color = '#FF8800'; category = 'BROKE (blind past break)'; break;
+          case 'flagged':
+            color = '#D63384'; category = 'FLAGGED — high splice loss'; break;
+          case 'bfill':
+            color = '#0070C0'; category = 'B-FILL — A blind, using B direction'; break;
+          case 'normal':
+            color = '#e67e22'; category = 'Splice loss'; break;
+          default:
+            color = '#e67e22'; category = entry.type || 'Event'; break;
+        }
+
+        // Draw filled dot with border
+        ctx.beginPath();
+        ctx.arc(sx, y, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Store for hover — include category and splice info
+        damageDots.push({
+          x: sx, y, r: dotR + 3,
+          text: entry.text,
+          color, fnum, category,
+          splice_km: sp.km,
+          splice_label: sp.is_bend ? `Bend at ${sp.km}km` : `Splice ${sp.splice_num} at ${sp.km}km`,
+        });
+      }
+    }
+  }
+
+  // ── Store highlight params so hover can redraw without re-calling draw2D ──
+  const _lw = fibers.length === 1 ? 1.8 : 0.8;
+  const _kmToX = kmToX;
+  const _dbToY = dbToY;
+  window._highlightParams = { lw: _lw, kmToX: _kmToX, dbToY: _dbToY };
+
+  // Fiber legend
+  ctx.font = '8px Consolas, monospace'; ctx.textAlign = 'right';
+  for (let fi = 0; fi < fibers.length; fi++) {
+    const fnum = fibers[fi];
+    ctx.fillStyle = data.breaks[String(fnum)] ? '#FF4444' : greys[fi % greys.length];
+    ctx.fillText(`F${fnum}`, ML - 3, MT + 10 + fi * 9);
+  }
+
+  // Axes
+  ctx.fillStyle = '#888'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+  const kmStep = (viewKmEnd - viewKmStart) > 30 ? 10 : (viewKmEnd - viewKmStart) > 10 ? 5 : 1;
+  for (let km = Math.ceil(viewKmStart / kmStep) * kmStep; km <= viewKmEnd; km += kmStep) {
+    const x = kmToX(km);
+    if (x >= ML && x <= ML + cW) ctx.fillText(`${km}`, x, MT + cH + 12);
+  }
+  ctx.fillText('km', ML + cW + 8, MT + cH + 12);
+  ctx.textAlign = 'right';
+  for (let db = Math.ceil(minDb); db <= maxDb; db += 2) {
+    const y = dbToY(db); if (y > MT + 5 && y < MT + cH - 5) ctx.fillText(`${db}`, ML - 3, y + 3);
+  }
+  ctx.save(); ctx.translate(10, MT + cH/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center'; ctx.font = '9px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('dB', 0, 0); ctx.restore();
+
+  // Title
+  const rib = currentRibbon >= 0 ? data.ribbons[currentRibbon] : null;
+  ctx.fillStyle = '#1F4E79'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+  const t = currentFiber > 0 ? `Fiber ${currentFiber}` : rib ? `${rib.tube} — F${rib.fibers}` : '';
+  ctx.fillText(t, ML + 3, MT - 6);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3D TOPO (bottom right)
+// ═══════════════════════════════════════════════════════════════════════════
+function excessColor(v) {
+  if (v < 0.001) return new THREE.Color(0x1a6b3c);
+  if (v < 0.005) return new THREE.Color(0x2ecc71);
+  if (v < 0.01)  return new THREE.Color(0x7dcea0);
+  if (v < 0.02)  return new THREE.Color(0xf1c40f);
+  if (v < 0.03)  return new THREE.Color(0xf39c12);
+  if (v < 0.05)  return new THREE.Color(0xe67e22);
+  if (v < 0.08)  return new THREE.Color(0xe74c3c);
+  return new THREE.Color(0x8b0000);
+}
+function makeLabel(text, color='#333', size=0.12) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 64;
+  const x = c.getContext('2d'); x.font = 'bold 32px sans-serif'; x.fillStyle = color;
+  x.textAlign = 'center'; x.fillText(text, 256, 42);
+  const t = new THREE.CanvasTexture(c);
+  const m = new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false });
+  const s = new THREE.Sprite(m); s.scale.set(size*2.5, size*0.3, 1); return s;
+}
+
+function initTopo() {
+  const el = document.getElementById('topo-3d');
+  scene = new THREE.Scene(); scene.background = new THREE.Color(0xffffff);
+  camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.01, 100);
+  camera.position.set(2, 2, 2);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(el.clientWidth, el.clientHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  el.appendChild(renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(2, 0, 0.2); controls.enableDamping = true;
+  scene.add(new THREE.AmbientLight(0x808080, 1.5));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(5, 8, 5); scene.add(dl);
+  window.addEventListener('resize', () => {
+    camera.aspect = el.clientWidth / el.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    draw2D();
+  });
+}
+
+function buildTopo() {
+  if (topoGroup) { topoGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); scene.remove(topoGroup); }
+  topoGroup = new THREE.Group();
+  const baseline = data.meta.baseline, rs = data.meta.ribbon_size;
+  let fibers = [];
+  if (currentFiber > 0) fibers = [currentFiber];
+  else if (currentRibbon >= 0) { const rib = data.ribbons[currentRibbon]; for (let f = rib.f_start; f <= rib.f_end; f++) fibers.push(f); }
+  else { for (const rib of data.ribbons) { for (let f = rib.f_start; f <= rib.f_end; f++) { if (data.fiber_profiles[String(f)]) { fibers.push(f); break; } } } }
+
+  const valid = fibers.filter(f => { const p = data.fiber_profiles[String(f)]; return p && p.length >= 2; });
+  if (!valid.length) { scene.add(topoGroup); return; }
+
+  let longest = null;
+  for (const f of valid) { const p = data.fiber_profiles[String(f)]; if (!longest || p.length > longest.length) longest = p; }
+  const kmGrid = longest.map(p => p[0]);
+  const nCols = kmGrid.length, nRows = valid.length;
+  const xS = 0.05, zS = nRows === 1 ? 0.3 : 0.025;
+
+  const geom = new THREE.PlaneGeometry(nCols*xS, nRows*zS, nCols-1, Math.max(nRows-1,1));
+  geom.rotateX(-Math.PI/2); geom.translate(nCols*xS/2, 0, nRows*zS/2);
+  const pos = geom.attributes.position;
+  const vc = new Float32Array(pos.count * 3);
+  for (let r = 0; r < nRows; r++) {
+    const prof = data.fiber_profiles[String(valid[r])];
+    for (let c = 0; c < nCols; c++) {
+      const idx = r * nCols + c;
+      let ex = prof && c < prof.length ? prof[c][1] - baseline : 0;
+      pos.setY(idx, Math.max(0, ex) * vScale);
+      const col = excessColor(Math.max(0, ex));
+      vc[idx*3] = col.r; vc[idx*3+1] = col.g; vc[idx*3+2] = col.b;
+    }
+  }
+  geom.setAttribute('color', new THREE.BufferAttribute(vc, 3));
+  geom.computeVertexNormals();
+  topoGroup.add(new THREE.Mesh(geom, new THREE.MeshPhongMaterial({ vertexColors: true, side: THREE.DoubleSide, shininess: 20 })));
+
+  // Break spikes
+  for (let r = 0; r < nRows; r++) {
+    const f = valid[r]; if (!data.breaks[String(f)]) continue;
+    const brk = data.breaks[String(f)];
+    const bx = (brk.km / kmGrid[nCols-1]) * nCols * xS;
+    const bz = (r + 0.5) * zS;
+    const h = 2;
+    topoGroup.add(new THREE.Mesh(new THREE.ConeGeometry(0.02, h, 6), new THREE.MeshPhongMaterial({ color: 0xe74c3c, emissive: 0x990000 })).translateX(bx).translateY(h/2).translateZ(bz));
+    const lb = makeLabel(`F${f} ${brk.type}`, '#e74c3c', 0.05);
+    lb.position.set(bx, h + 0.08, bz); topoGroup.add(lb);
+  }
+
+  // Splices
+  const tw = nRows * zS;
+  for (const sp of data.splices) {
+    const x = (sp.km / kmGrid[nCols-1]) * nCols * xS;
+    const c = sp.is_bend ? 0xe67e22 : 0x5dade2;
+    const pl = new THREE.Mesh(new THREE.PlaneGeometry(0.004, tw + 0.02), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.1, side: THREE.DoubleSide }));
+    pl.position.set(x, 0.2, tw/2); pl.rotation.y = Math.PI/2; topoGroup.add(pl);
+    const lb = makeLabel(sp.is_bend ? `B ${sp.km}` : `S${sp.splice_num}`, sp.is_bend ? '#e67e22' : '#1F4E79', 0.06);
+    lb.position.set(x, 0.5, -0.03); topoGroup.add(lb);
+  }
+  for (let km = 0; km <= data.meta.span_km; km += 10) {
+    const x = (km / kmGrid[nCols-1]) * nCols * xS;
+    const lb = makeLabel(`${km}km`, '#bbb', 0.04);
+    lb.position.set(x, -0.04, -0.03); topoGroup.add(lb);
+  }
+  scene.add(topoGroup);
+  const mx = nCols*xS/2;
+  camera.position.set(mx, nRows > 5 ? 2 : 1, tw + (nRows > 5 ? 2 : 1.5));
+  controls.target.set(mx, 0, tw * 0.4);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════════════════════
+// Called from setup screen after data is loaded
+window.loadDataAndStart = async function() {
+  try {
+    // Try pywebview API first, fall back to static file
+    if (window.pywebview?.api?.get_data) {
+      data = await window.pywebview.api.get_data();
+    }
+    if (!data) {
+      data = await (await fetch('combined_data.json?v=' + Date.now())).json();
+    }
+  } catch (e) {
+    try { data = await (await fetch('combined_data.json?v=' + Date.now())).json(); }
+    catch (e2) { alert('Could not load data: ' + e2.message); return; }
+  }
+  document.getElementById('loading').style.display = 'none';
+  buildTable(); initTopo(); buildTopo();
+  (function anim() { requestAnimationFrame(anim); controls.update(); renderer.render(scene, camera); })();
+
+  document.getElementById('fiber-btn').addEventListener('click', () => {
+    const f = parseInt(document.getElementById('fiber-input').value);
+    if (f && (data.fiber_traces?.[String(f)] || data.fiber_profiles[String(f)])) {
+      currentFiber = f; currentRibbon = Math.floor((f-1)/data.meta.ribbon_size);
+      document.getElementById('chart-info').textContent = `Fiber ${f}`;
+      draw2D(); buildTopo();
+    }
+  });
+  document.getElementById('fiber-input').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('fiber-btn').click(); });
+  document.getElementById('ribbon-btn').addEventListener('click', () => {
+    currentFiber = -1;
+    if (currentRibbon >= 0) { const r = data.ribbons[currentRibbon]; document.getElementById('chart-info').textContent = `${r.tube} — F${r.fibers}`; draw2D(); buildTopo(); }
+  });
+
+  // Zoom controls
+  document.getElementById('km-end').value = Math.round(data.meta.span_km);
+  document.getElementById('zoom-btn').addEventListener('click', () => {
+    zoomKmStart = parseFloat(document.getElementById('km-start').value);
+    zoomKmEnd = parseFloat(document.getElementById('km-end').value);
+    draw2D();
+  });
+  document.getElementById('reset-zoom').addEventListener('click', () => {
+    zoomKmStart = null; zoomKmEnd = null;
+    document.getElementById('km-start').value = 0;
+    document.getElementById('km-end').value = Math.round(data.meta.span_km);
+    draw2D();
+  });
+
+  // 3D vertical scale
+  document.getElementById('v-scale').addEventListener('input', e => {
+    vScale = parseFloat(e.target.value);
+    document.getElementById('v-label').textContent = vScale + 'x';
+    buildTopo();
+  });
+
+  // Column click also zooms 2D to ±5 km around the splice
+  document.querySelectorAll('#hdr-row th[data-si]').forEach(th => {
+    th.addEventListener('dblclick', () => {
+      const sp = data.splices[+th.dataset.si];
+      zoomKmStart = Math.max(0, sp.km - 5);
+      zoomKmEnd = Math.min(data.meta.span_km, sp.km + 5);
+      document.getElementById('km-start').value = Math.round(zoomKmStart);
+      document.getElementById('km-end').value = Math.round(zoomKmEnd);
+      highlightKm = sp.km;
+      draw2D();
+    });
+  });
+
+  // ── Scroll-to-zoom + drag-to-pan on 2D canvas ─────────────────────────
+  const traceCanvas = document.getElementById('trace-canvas');
+
+  // Scroll to zoom (centered on mouse position)
+  traceCanvas.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const fullKm = getKmRange();
+    const s = zoomKmStart ?? 0;
+    const e = zoomKmEnd ?? fullKm;
+    const range = e - s;
+    if (range < 0.5 && ev.deltaY < 0) return; // don't zoom in past 0.5 km
+
+    // Mouse position as fraction of canvas width
+    const rect = traceCanvas.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left - 45) / (rect.width - 60)));
+
+    // Zoom factor
+    const factor = ev.deltaY > 0 ? 1.15 : 0.85;
+    const newRange = Math.min(fullKm, range * factor);
+    const center = s + range * frac;
+    let ns = center - newRange * frac;
+    let ne = center + newRange * (1 - frac);
+
+    // Clamp
+    if (ns < 0) { ne -= ns; ns = 0; }
+    if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+    ns = Math.max(0, ns);
+
+    zoomKmStart = ns;
+    zoomKmEnd = ne;
+    document.getElementById('km-start').value = Math.round(ns);
+    document.getElementById('km-end').value = Math.round(ne);
+    draw2D();
+  }, { passive: false });
+
+  // Drag to pan
+  // Hover tooltip for damage dots + fiber highlighting
+  const traceTooltip = document.getElementById('trace-tooltip');
+  let hoveredFnum = null;
+
+  traceCanvas.addEventListener('mousemove', ev => {
+    if (isDragging) { traceTooltip.style.display = 'none'; return; }
+    const rect = traceCanvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left;
+    const my = ev.clientY - rect.top;
+
+    // Check damage dots
+    let hitDot = null;
+    for (const dot of damageDots) {
+      const dx = mx - dot.x, dy = my - dot.y;
+      if (dx * dx + dy * dy <= dot.r * dot.r) {
+        hitDot = dot;
+        break;
+      }
+    }
+
+    if (hitDot) {
+      traceTooltip.innerHTML =
+        `<b style="color:${hitDot.color}">Fiber ${hitDot.fnum}</b><br>` +
+        `<b>${hitDot.category}</b><br>` +
+        `${hitDot.splice_label}<br>` +
+        `<span style="font-size:10px;color:#888">${hitDot.text}</span>`;
+      traceTooltip.style.display = 'block';
+      traceTooltip.style.left = (mx + 15) + 'px';
+      traceTooltip.style.top = (my + 15) + 'px';
+      traceCanvas.style.cursor = 'pointer';
+
+      // Highlight this fiber's trace — redraw with it on top in the dot's color
+      if (hoveredFnum !== hitDot.fnum) {
+        hoveredFnum = hitDot.fnum;
+        draw2D();  // redraw base chart
+        // Now draw the highlighted fiber on top
+        drawFiberHighlight(hitDot.fnum, hitDot.color);
+      }
+      return;
+    }
+
+    // No dot hit — clear highlight if needed
+    if (hoveredFnum !== null) {
+      hoveredFnum = null;
+      draw2D();  // redraw without highlight
+    }
+    traceTooltip.style.display = 'none';
+    traceCanvas.style.cursor = isDragging ? 'grabbing' : 'default';
+  });
+
+  traceCanvas.addEventListener('mousedown', ev => {
+    isDragging = true;
+    dragStartX = ev.clientX;
+    dragStartKmS = zoomKmStart ?? 0;
+    dragStartKmE = zoomKmEnd ?? getKmRange();
+    traceCanvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', ev => {
+    if (!isDragging) return;
+    const rect = traceCanvas.getBoundingClientRect();
+    const dx = ev.clientX - dragStartX;
+    const kmPerPx = (dragStartKmE - dragStartKmS) / (rect.width - 60);
+    const dkm = -dx * kmPerPx;
+    const fullKm = getKmRange();
+    let ns = dragStartKmS + dkm;
+    let ne = dragStartKmE + dkm;
+    if (ns < 0) { ne -= ns; ns = 0; }
+    if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
+    zoomKmStart = Math.max(0, ns);
+    zoomKmEnd = ne;
+    document.getElementById('km-start').value = Math.round(zoomKmStart);
+    document.getElementById('km-end').value = Math.round(zoomKmEnd);
+    draw2D();
+  });
+  window.addEventListener('mouseup', () => {
+    if (isDragging) { isDragging = false; traceCanvas.style.cursor = 'default'; }
+  });
+}
+// Don't auto-start — wait for setup screen to call loadDataAndStart()
+// But if running in browser (not pywebview), auto-check for existing data
+if (!window.pywebview) {
+  // Running via http.server — try loading existing data directly
+  setTimeout(() => {
+    fetch('combined_data.json?v=' + Date.now()).then(r => r.json()).then(d => {
+      if (d) { document.getElementById('setup-screen').style.display = 'none'; data = d; loadDataAndStart(); }
+    }).catch(() => {});
+  }, 500);
+}
+</script>
+</body>
+</html>
