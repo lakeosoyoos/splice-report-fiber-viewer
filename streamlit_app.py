@@ -681,22 +681,27 @@ else:
         <div style="flex:1;background:#fff;border:1px solid #e5e5e5;border-top:4px solid #E8461E;
                     border-radius:4px;padding:22px 24px;box-shadow:0 2px 10px rgba(0,0,0,0.05);">
             <div style="font-family:'Nunito',sans-serif;font-size:15px;font-weight:900;
-                        color:#1a1a1a;margin-bottom:12px;">Right Panels - Trace + Topo</div>
+                        color:#1a1a1a;margin-bottom:12px;">Right Panel - 2D OTDR Trace</div>
             <ul style="list-style:none;padding:0;margin:0;">
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Top: 2D OTDR trace view - scroll to zoom, drag to pan, hover for event details
+                    Full-height 2D OTDR trace — scroll to zoom, drag to pan, hover for event details
                 </li>
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Bottom: 3D topo view - attenuation profile surface with OrbitControls
+                    Colored dots mark flagged splice events; breaks and brokes shown in red/orange
                 </li>
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
                     Enter a fiber number or click Full Ribbon to switch views
+                </li>
+                <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
+                            color:#333;padding:4px 0;display:flex;gap:8px;">
+                    <span style="color:#E8461E;font-weight:900;">▸</span>
+                    Pop Out 2D opens a live interactive copy on a second monitor; Collapse 2D expands the splice table to full width
                 </li>
             </ul>
         </div>
