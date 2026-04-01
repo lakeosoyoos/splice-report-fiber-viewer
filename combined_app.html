@@ -117,7 +117,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     <div id="topo-tooltip"></div>
   </div>
 </div>
-<button id="restore-btn" onclick="collapseToggle()">▶ Expand 2D</button>
+<button id="restore-btn" onclick="collapseToggle()">◀ Expand 2D</button>
 <div id="setup-screen" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#f8f9fa;z-index:200;display:flex;align-items:center;justify-content:center">
   <div style="background:#fff;border:1px solid #ccc;border-radius:12px;padding:30px 40px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
     <h1 style="color:#1F4E79;font-size:20px;margin-bottom:8px">Splice Report Viewer</h1>
@@ -1342,13 +1342,33 @@ window.addEventListener('load', function() {
 });
 
 // ── Sync from main window ─────────────────────────────────────────────────
+// Called directly by main window via popupWin.syncFromOpener() — most reliable
+window.syncFromOpener = function() {
+  try {
+    var s = window.opener && window.opener._popupState;
+    if (!s) return;
+    if (!data) { try { data = window.opener._popupData; } catch(e2) {} }
+    if (s.ribbonIdx != null) currentRibbon = s.ribbonIdx;
+    if (s.fiberNum  != null) currentFiber  = s.fiberNum;
+    zoomKmStart = s.zoomStart; zoomKmEnd = s.zoomEnd;
+    highlightKm = s.highlightKm || null;
+    if (s.label) {
+      document.getElementById('pchart-info').textContent  = s.label;
+      document.getElementById('pheader-label').textContent = s.label;
+    }
+    if (s.zoomStart != null) document.getElementById('pkm-start').value = Math.round(s.zoomStart);
+    if (s.zoomEnd   != null) document.getElementById('pkm-end').value   = Math.round(s.zoomEnd);
+    draw2D();
+  } catch(e) {}
+};
+// postMessage fallback
 window.addEventListener('message', function(ev) {
   if (!ev.data || ev.data.type !== 'sync') return;
   if (!data) { try { data = window.opener && window.opener._popupData; } catch(e) {} }
   if (ev.data.ribbonIdx != null) currentRibbon = ev.data.ribbonIdx;
   if (ev.data.fiberNum  != null) currentFiber  = ev.data.fiberNum;
-  if (ev.data.zoomStart != null) { zoomKmStart = ev.data.zoomStart; document.getElementById('pkm-start').value = Math.round(zoomKmStart); }
-  if (ev.data.zoomEnd   != null) { zoomKmEnd   = ev.data.zoomEnd;   document.getElementById('pkm-end').value   = Math.round(zoomKmEnd); }
+  if (ev.data.zoomStart != null) { zoomKmStart = ev.data.zoomStart; document.getElementById('pkm-start').value = Math.round(ev.data.zoomStart); }
+  if (ev.data.zoomEnd   != null) { zoomKmEnd   = ev.data.zoomEnd;   document.getElementById('pkm-end').value   = Math.round(ev.data.zoomEnd); }
   highlightKm = ev.data.highlightKm != null ? ev.data.highlightKm : null;
   if (ev.data.label) {
     document.getElementById('pchart-info').textContent  = ev.data.label;
@@ -1365,15 +1385,17 @@ window.addEventListener('message', function(ev) {
 function syncPopup() {
   if (!popupWin || popupWin.closed) return;
   const label = document.getElementById('chart-info')?.textContent || '';
-  popupWin.postMessage({
-    type: 'sync',
-    ribbonIdx: currentRibbon,
-    fiberNum:  currentFiber,
-    zoomStart: zoomKmStart,
-    zoomEnd:   zoomKmEnd,
-    highlightKm,
-    label,
-  }, '*');
+  // Store state on window so popup can read it directly (works even when postMessage
+  // is blocked by Streamlit's iframe sandbox)
+  window._popupState = {
+    ribbonIdx: currentRibbon, fiberNum: currentFiber,
+    zoomStart: zoomKmStart,   zoomEnd:  zoomKmEnd,
+    highlightKm, label,
+  };
+  // Direct function call — most reliable from sandboxed iframe
+  try { if (popupWin.syncFromOpener) popupWin.syncFromOpener(); } catch(e) {}
+  // postMessage as secondary path
+  try { popupWin.postMessage({ type: 'sync', ...window._popupState }, '*'); } catch(e) {}
 }
 
 let rightCollapsed = false;
@@ -1387,7 +1409,7 @@ window.collapseToggle = function() {
     right.style.display = 'none';
     left.style.width = '100vw';
     if (restore) restore.style.display = 'block';
-    if (btn) btn.textContent = '▶ Show 2D';
+    if (btn) btn.textContent = '▶ Collapse 2D';  // button hidden while collapsed, reset for restore
   } else {
     right.style.display = 'flex';
     right.style.width = '55vw';
