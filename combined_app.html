@@ -301,7 +301,7 @@ function buildTable() {
       td0.classList.add('active');
       currentRibbon = rib.ribbon - 1; currentFiber = -1;
       document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
-      draw2D(); buildTopo();
+      draw2D();
     });
     tr.appendChild(td0);
     for (const cell of rib.cells) {
@@ -327,7 +327,6 @@ function buildTable() {
           td0.classList.add('active');
           currentRibbon = rib.ribbon - 1; currentFiber = -1;
           document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
-          buildTopo();
         }
         highlightKm = sp.km;
         const fullKm = getKmRange();
@@ -684,12 +683,7 @@ function initTopo() {
   controls.target.set(2, 0, 0.2); controls.enableDamping = true;
   scene.add(new THREE.AmbientLight(0x808080, 1.5));
   const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(5, 8, 5); scene.add(dl);
-  window.addEventListener('resize', () => {
-    camera.aspect = el.clientWidth / el.clientHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(el.clientWidth, el.clientHeight);
-    draw2D();
-  });
+  window.addEventListener('resize', () => { draw2D(); });
 }
 
 function buildTopo() {
@@ -779,21 +773,20 @@ window.loadDataAndStart = async function() {
     catch (e2) { alert('Could not load data: ' + e2.message); return; }
   }
   document.getElementById('loading').style.display = 'none';
-  buildTable(); initTopo(); buildTopo();
-  (function anim() { requestAnimationFrame(anim); controls.update(); renderer.render(scene, camera); })();
+  buildTable();
 
   document.getElementById('fiber-btn').addEventListener('click', () => {
     const f = parseInt(document.getElementById('fiber-input').value);
-    if (f && (data.fiber_traces?.[String(f)] || data.fiber_profiles[String(f)])) {
+    if (f && data.fiber_traces?.[String(f)]) {
       currentFiber = f; currentRibbon = Math.floor((f-1)/data.meta.ribbon_size);
       document.getElementById('chart-info').textContent = `Fiber ${f}`;
-      draw2D(); buildTopo();
+      draw2D();
     }
   });
   document.getElementById('fiber-input').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('fiber-btn').click(); });
   document.getElementById('ribbon-btn').addEventListener('click', () => {
     currentFiber = -1;
-    if (currentRibbon >= 0) { const r = data.ribbons[currentRibbon]; document.getElementById('chart-info').textContent = `${r.tube} — F${r.fibers}`; draw2D(); buildTopo(); }
+    if (currentRibbon >= 0) { const r = data.ribbons[currentRibbon]; document.getElementById('chart-info').textContent = `${r.tube} — F${r.fibers}`; draw2D(); }
   });
 
   // Zoom controls
@@ -810,12 +803,6 @@ window.loadDataAndStart = async function() {
     draw2D();
   });
 
-  // 3D vertical scale
-  document.getElementById('v-scale').addEventListener('input', e => {
-    vScale = parseFloat(e.target.value);
-    document.getElementById('v-label').textContent = vScale + 'x';
-    buildTopo();
-  });
 
   // Column click also zooms 2D to ±5 km around the splice
   document.querySelectorAll('#hdr-row th[data-si]').forEach(th => {
