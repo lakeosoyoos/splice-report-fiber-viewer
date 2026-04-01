@@ -10,7 +10,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
 #left { width: 45vw; height: 100vh; overflow-y: auto; overflow-x: auto; border-right: 2px solid #1F4E79; background: #fafafa; }
 #left h2 { position: sticky; top: 0; z-index: 10; background: #1F4E79; color: #fff; padding: 6px 10px; font-size: 12px; margin: 0; }
 #damage-table { width: 100%; border-collapse: collapse; font-size: 9px; font-family: 'Consolas', monospace; }
-#damage-table th { background: #1F4E79; color: #fff; padding: 3px 5px; font-size: 8px; position: sticky; top: 28px; z-index: 5; text-align: center; border: 0.5px solid #163d5e; white-space: nowrap; cursor: pointer; }
+#damage-table th { background: #1F4E79; color: #fff; padding: 3px 5px; font-size: 8px; position: sticky; top: 28px; z-index: 5; text-align: center; border: 0.5px solid #163d5e; cursor: pointer; vertical-align: top; }
 #damage-table th.bend-hdr { background: #FFD700; color: #5a4a00; }
 #damage-table td { padding: 2px 4px; border: 0.5px solid #ddd; vertical-align: top; white-space: pre-line; line-height: 1.2; cursor: pointer; font-size: 8px; }
 .ribbon-label { font-weight: 600; font-size: 9px; white-space: nowrap; cursor: pointer; background: #f0f4f8; }
@@ -260,28 +260,43 @@ function getKmRange() {
 // ═══════════════════════════════════════════════════════════════════════════
 // TABLE
 // ═══════════════════════════════════════════════════════════════════════════
+function ftStr(km) { return Math.round(km * 3280.84).toLocaleString() + ' ft'; }
+function kmStr(km) { return km.toFixed(3) + ' km'; }
+
 function buildTable() {
   const hdr = document.getElementById('hdr-row');
   const body = document.getElementById('tbl-body');
-  document.getElementById('table-title').textContent = `${data.meta.site_a} to ${data.meta.site_b}`;
+  const spanKm = data.meta.span_km;
+  document.getElementById('table-title').textContent = `${data.meta.site_a} → ${data.meta.site_b}`;
   let h = '<th>Ribbon</th>';
   for (let si = 0; si < data.splices.length; si++) {
     const sp = data.splices[si];
     const cls = sp.is_bend ? ' class="bend-hdr"' : '';
-    h += `<th${cls} data-si="${si}">${sp.is_bend ? 'B' : 'S'+sp.splice_num}<br>${sp.km}km</th>`;
+    const abKm  = sp.km;
+    const baKm  = spanKm - sp.km;
+    const label = sp.is_bend ? 'Bend' : `S${sp.splice_num}`;
+    h += `<th${cls} data-si="${si}" style="white-space:nowrap; line-height:1.4; padding:4px 6px;">
+      <div style="font-weight:bold;">${label}</div>
+      <div style="font-size:7px;color:#cce4ff;">${data.meta.site_a}→${data.meta.site_b}: ${kmStr(abKm)} / ${ftStr(abKm)}</div>
+      <div style="font-size:7px;color:#ffe0b2;">${data.meta.site_b}→${data.meta.site_a}: ${kmStr(baKm)} / ${ftStr(baKm)}</div>
+    </th>`;
   }
   hdr.innerHTML = h;
   hdr.querySelectorAll('th[data-si]').forEach(th => {
     th.addEventListener('click', () => {
       const sp = data.splices[+th.dataset.si];
       highlightKm = sp.km;
-      // Pan the current zoom window to center on this splice
+      // If no ribbon selected yet, select the first one
+      if (currentRibbon < 0) {
+        const firstRib = data.ribbons[0];
+        currentRibbon = 0; currentFiber = -1;
+        document.querySelector('.ribbon-label')?.classList.add('active');
+        document.getElementById('chart-info').textContent = `Ribbon 1 (${firstRib.tube}) — F${firstRib.fibers}`;
+      }
+      // Zoom to ±5 km around this splice
       const fullKm = getKmRange();
-      const s = zoomKmStart ?? 0;
-      const e = zoomKmEnd ?? fullKm;
-      const range = e - s;
-      let ns = sp.km - range / 2;
-      let ne = sp.km + range / 2;
+      const window = Math.min(10, fullKm);
+      let ns = sp.km - window / 2, ne = sp.km + window / 2;
       if (ns < 0) { ne -= ns; ns = 0; }
       if (ne > fullKm) { ns -= (ne - fullKm); ne = fullKm; }
       zoomKmStart = Math.max(0, ns);
@@ -300,6 +315,11 @@ function buildTable() {
       document.querySelectorAll('.ribbon-label').forEach(e => e.classList.remove('active'));
       td0.classList.add('active');
       currentRibbon = rib.ribbon - 1; currentFiber = -1;
+      // Reset zoom to full span so traces are visible
+      zoomKmStart = null; zoomKmEnd = null;
+      document.getElementById('km-start').value = 0;
+      document.getElementById('km-end').value = Math.round(data.meta.span_km);
+      highlightKm = null;
       document.getElementById('chart-info').textContent = `Ribbon ${rib.ribbon} (${rib.tube}) — F${rib.fibers}`;
       draw2D();
     });
