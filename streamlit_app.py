@@ -598,6 +598,29 @@ if run_button and has_a:
 
     baseline = float(np.median(all_slopes)) if all_slopes else 0.19
 
+    # Build B-direction traces in A-frame (for A+B combined view)
+    # Each B trace is converted: km_a = span_km - km_b, then sorted ascending.
+    # The result shows the B-end view mirrored onto the A-frame axis so both
+    # traces can be overlaid — A slopes down left-to-right, B slopes down
+    # right-to-left, together covering the full span even across breaks.
+    fiber_traces_b = {}
+    if fibers_b:
+        for fnum in sorted(fibers_b.keys()):
+            rb = fibers_b[fnum]
+            trace_b, dist_b, dx_km_b, noise_km_b = fiber_dist_array(rb)
+            if trace_b is None:
+                continue
+            end_idx_b = min(int((noise_km_b - dist_b[0]) / dx_km_b), len(trace_b))
+            step_b = max(1, end_idx_b // target_pts)
+            pts_b = []
+            for i in range(0, end_idx_b - step_b, step_b):
+                km_b = float(np.mean(dist_b[i:i + step_b]))
+                db   = float(np.mean(trace_b[i:i + step_b]))
+                pts_b.append([round(span_km - km_b, 3), round(db, 3)])
+            pts_b.sort(key=lambda p: p[0])   # sort by A-frame km
+            if pts_b:
+                fiber_traces_b[str(fnum)] = pts_b
+
     # Auto-detect site names
     folder_name = os.path.basename(os.path.normpath(dir_a)).upper()
     alpha = ''.join(c for c in folder_name if c.isalpha())
@@ -623,6 +646,7 @@ if run_button and has_a:
         'breaks': {str(f): b for f, b in breaks.items()},
         'fiber_profiles': fiber_profiles,
         'fiber_traces': fiber_traces,
+        'fiber_traces_b': fiber_traces_b,
     }
 
     bar.progress(0.95, text="Building viewer...")

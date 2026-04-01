@@ -107,6 +107,8 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
       </div>
       <button class="btn" id="zoom-btn">Zoom</button>
       <button class="btn" id="reset-zoom" style="border-color:#999;color:#666">Reset Zoom</button>
+      <div class="lbl">Trace Direction</div>
+      <button class="btn" id="ab-toggle" style="border-color:#c87533;color:#c87533">Show A+B</button>
       <div class="lbl" style="display:none">3D Vertical Scale</div>
       <input type="range" id="v-scale" min="1" max="50" value="1" style="width:100%;display:none">
       <div style="text-align:center;font-size:9px;color:#888;display:none"><b id="v-label">1x</b></div>
@@ -245,6 +247,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 let data;
 let currentRibbon = -1, currentFiber = -1, highlightKm = null;
+let showBDir = false;
 let scene, camera, renderer, controls, topoGroup;
 let vScale = 1;
 let zoomKmStart = null, zoomKmEnd = null;  // null = full span
@@ -543,6 +546,29 @@ function draw2D() {
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
+    }
+  }
+
+  // ── B-direction traces in A-frame (when A+B toggle is on) ────────────────
+  if (showBDir && data.fiber_traces_b) {
+    const bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
+                     '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
+    for (let fi = 0; fi < fibers.length; fi++) {
+      const fnum = fibers[fi];
+      const traceB = data.fiber_traces_b[String(fnum)];
+      if (!traceB || traceB.length < 2) continue;
+      const lw = fibers.length === 1 ? 1.8 : 0.8;
+      ctx.strokeStyle = bAmbers[fi % bAmbers.length];
+      ctx.lineWidth = lw;
+      ctx.setLineDash([4, 3]);   // dashed so it's visually distinct from A trace
+      ctx.beginPath();
+      let started = false;
+      for (const [km, db] of traceB) {
+        const x = kmToX(km), y = dbToY(db);
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);   // reset dash
     }
   }
 
@@ -854,6 +880,24 @@ window.loadDataAndStart = async function() {
     if (currentRibbon >= 0) { const r = data.ribbons[currentRibbon]; document.getElementById('chart-info').textContent = `${r.tube} — F${r.fibers}`; draw2D(); }
   });
 
+  // A+B toggle
+  document.getElementById('ab-toggle').addEventListener('click', () => {
+    showBDir = !showBDir;
+    const btn = document.getElementById('ab-toggle');
+    if (showBDir) {
+      btn.textContent = 'Show A only';
+      btn.style.background = '#c87533';
+      btn.style.color = '#fff';
+      btn.style.borderColor = '#c87533';
+    } else {
+      btn.textContent = 'Show A+B';
+      btn.style.background = '';
+      btn.style.color = '#c87533';
+      btn.style.borderColor = '#c87533';
+    }
+    draw2D();
+  });
+
   // Zoom controls
   document.getElementById('km-end').value = Math.round(data.meta.span_km);
   document.getElementById('zoom-btn').addEventListener('click', () => {
@@ -1055,6 +1099,8 @@ body { background:#fff; display:flex; flex-direction:column; height:100vh; overf
     </div>
     <button class="pbtn" id="pzoom-btn">Zoom</button>
     <button class="pbtn" id="preset-zoom" style="border-color:#999;color:#666">Reset Zoom</button>
+    <div class="plbl">Trace Direction</div>
+    <button class="pbtn" id="pab-toggle" style="border-color:#c87533;color:#c87533">Show A+B</button>
   </div>
 </div>
 <script>
@@ -1063,7 +1109,7 @@ try { data = window.opener && window.opener._popupData; } catch(e) {}
 if (!data) { document.getElementById('pchart-info').textContent = 'No data — reopen from main window'; }
 
 var currentRibbon = -1, currentFiber = -1, highlightKm = null;
-var zoomKmStart = null, zoomKmEnd = null;
+var zoomKmStart = null, zoomKmEnd = null, showBDir = false;
 var isDragging = false, dragStartX = 0, dragStartKmS = 0, dragStartKmE = 0;
 var damageDots = [];
 
@@ -1194,6 +1240,28 @@ function draw2D() {
         if (pi === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
       }
       ctx.stroke();
+    }
+  }
+
+  // ── B-direction traces in A-frame ────────────────────────────────────────
+  if (showBDir && data.fiber_traces_b) {
+    var bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
+                   '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
+    for (var bfi = 0; bfi < fibers.length; bfi++) {
+      var bfnum = fibers[bfi];
+      var traceB = data.fiber_traces_b[String(bfnum)];
+      if (!traceB || traceB.length < 2) continue;
+      var blw = fibers.length === 1 ? 1.8 : 0.8;
+      ctx.strokeStyle = bAmbers[bfi % bAmbers.length];
+      ctx.lineWidth = blw;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); var bStarted = false;
+      for (var bpi = 0; bpi < traceB.length; bpi++) {
+        var bx2 = kmToX(traceB[bpi][0]), by2 = dbToY(traceB[bpi][1]);
+        if (!bStarted) { ctx.moveTo(bx2, by2); bStarted = true; } else ctx.lineTo(bx2, by2);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
 
@@ -1338,6 +1406,25 @@ window.addEventListener('load', function() {
   });
   pcanvas.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
   window.addEventListener('resize', function() { if (data) draw2D(); });
+
+  // A+B toggle in popup
+  document.getElementById('pab-toggle').addEventListener('click', function() {
+    showBDir = !showBDir;
+    var btn = document.getElementById('pab-toggle');
+    if (showBDir) {
+      btn.textContent = 'Show A only';
+      btn.style.background = '#c87533';
+      btn.style.color = '#fff';
+      btn.style.borderColor = '#c87533';
+    } else {
+      btn.textContent = 'Show A+B';
+      btn.style.background = '';
+      btn.style.color = '#c87533';
+      btn.style.borderColor = '#c87533';
+    }
+    draw2D();
+  });
+
   if (data && currentRibbon >= 0) draw2D();
 });
 
@@ -1352,6 +1439,14 @@ window.syncFromOpener = function() {
     if (s.fiberNum  != null) currentFiber  = s.fiberNum;
     zoomKmStart = s.zoomStart; zoomKmEnd = s.zoomEnd;
     highlightKm = s.highlightKm || null;
+    if (s.showBDir != null) {
+      showBDir = s.showBDir;
+      var pabt = document.getElementById('pab-toggle');
+      if (pabt) {
+        if (showBDir) { pabt.textContent = 'Show A only'; pabt.style.background = '#c87533'; pabt.style.color = '#fff'; pabt.style.borderColor = '#c87533'; }
+        else          { pabt.textContent = 'Show A+B';   pabt.style.background = '';        pabt.style.color = '#c87533'; pabt.style.borderColor = '#c87533'; }
+      }
+    }
     if (s.label) {
       document.getElementById('pchart-info').textContent  = s.label;
       document.getElementById('pheader-label').textContent = s.label;
@@ -1370,6 +1465,14 @@ window.addEventListener('message', function(ev) {
   if (ev.data.zoomStart != null) { zoomKmStart = ev.data.zoomStart; document.getElementById('pkm-start').value = Math.round(ev.data.zoomStart); }
   if (ev.data.zoomEnd   != null) { zoomKmEnd   = ev.data.zoomEnd;   document.getElementById('pkm-end').value   = Math.round(ev.data.zoomEnd); }
   highlightKm = ev.data.highlightKm != null ? ev.data.highlightKm : null;
+  if (ev.data.showBDir != null) {
+    showBDir = ev.data.showBDir;
+    var pabt = document.getElementById('pab-toggle');
+    if (pabt) {
+      if (showBDir) { pabt.textContent = 'Show A only'; pabt.style.background = '#c87533'; pabt.style.color = '#fff'; pabt.style.borderColor = '#c87533'; }
+      else          { pabt.textContent = 'Show A+B';   pabt.style.background = '';        pabt.style.color = '#c87533'; pabt.style.borderColor = '#c87533'; }
+    }
+  }
   if (ev.data.label) {
     document.getElementById('pchart-info').textContent  = ev.data.label;
     document.getElementById('pheader-label').textContent = ev.data.label;
@@ -1390,7 +1493,7 @@ function syncPopup() {
   window._popupState = {
     ribbonIdx: currentRibbon, fiberNum: currentFiber,
     zoomStart: zoomKmStart,   zoomEnd:  zoomKmEnd,
-    highlightKm, label,
+    highlightKm, showBDir, label,
   };
   // Direct function call — most reliable from sandboxed iframe
   try { if (popupWin.syncFromOpener) popupWin.syncFromOpener(); } catch(e) {}
