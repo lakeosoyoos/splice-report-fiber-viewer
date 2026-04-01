@@ -426,7 +426,9 @@ function draw2D() {
   const ML = 45, MR = 15, MT = 20, MB = 30;
   const cW = W - ML - MR, cH = H - MT - MB;
   const kmToX = km => ML + ((km - viewKmStart) / (viewKmEnd - viewKmStart)) * cW;
-  const dbToY = db => MT + ((maxDb - db) / (maxDb - minDb)) * cH;
+  // Trace values increase with distance (loss accumulates), so map low→top, high→bottom
+  // giving a downward-sloping OTDR trace from left to right
+  const dbToY = db => MT + ((db - minDb) / (maxDb - minDb)) * cH;
 
   // Grid
   ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.5;
