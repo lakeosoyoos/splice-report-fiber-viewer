@@ -511,16 +511,24 @@ if run_button and has_a:
         return None
 
     span_estimates = []
-    # Matched fibers — fiber numbers present in both directions
     if fibers_b:
         common = set(fibers_a.keys()) & set(fibers_b.keys())
         for fnum in common:
             a_end = _end_km(fibers_a[fnum])
             b_end = _end_km(fibers_b[fnum])
-            if a_end and b_end:
-                # A end + B end = span (works for broken AND intact fibers)
+            if not a_end or not b_end:
+                continue
+            # Healthy fiber: A and B both cover the full span from their end,
+            #   so dist_a ≈ dist_b ≈ span  →  use dist_a directly
+            # Broken fiber: dist_a = break_km, dist_b = span - break_km,
+            #   dist_a + dist_b = span  →  use the sum
+            if abs(a_end - b_end) / max(a_end, b_end) < 0.10:
+                # Ends match within 10% → healthy → span = dist_a
+                span_estimates.append(a_end)
+            else:
+                # Ends differ → broken → span = dist_a + dist_b
                 span_estimates.append(a_end + b_end)
-    # Unmatched A fibers — just use their end km (healthy fibers reach full span)
+    # For fibers with only A direction, their end event = span if healthy
     for fnum, r in fibers_a.items():
         a_end = _end_km(r)
         if a_end:
