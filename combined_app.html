@@ -444,13 +444,16 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
 
   if (traceB && traceB.length >= 2 && traceA && traceA.length > 0) {
     let db_A_at_left = null;
-    if (brk && bLeftKm !== null && Math.abs(bLeftKm - brk.km) < 1.5) {
-      // Near break — walk back to last real signal before cliff
+    if (brk) {
+      // Walk backwards to find the last real signal point STRICTLY at or before
+      // brk.km — the noise cliff is inserted at brk.km+0.01 so we must not
+      // overshoot that boundary by even 0.05 km.
       for (let i = traceA.length - 1; i >= 0; i--) {
-        if (traceA[i][0] <= brk.km + 0.05) { db_A_at_left = traceA[i][1]; break; }
+        if (traceA[i][0] <= brk.km) { db_A_at_left = traceA[i][1]; break; }
       }
+    } else {
+      db_A_at_left = interp(traceA, bLeftKm);
     }
-    if (db_A_at_left === null) db_A_at_left = interp(traceA, bLeftKm);
     if (db_A_at_left !== null) bOffset = db_A_at_left + db_B_far;
   }
 
@@ -1318,28 +1321,64 @@ function draw2D() {
     for (var f = rib.f_start; f <= rib.f_end; f++) fibers.push(f);
   } else return;
 
-  var gMinDb = Infinity, gMaxDb = -Infinity, gMaxKm = 0;
-  for (var fi = 0; fi < fibers.length; fi++) {
-    var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
-    if (!tr) continue;
-    for (var pi = 0; pi < tr.length; pi++) {
-      if (tr[pi][1] < gMinDb) gMinDb = tr[pi][1];
-      if (tr[pi][1] > gMaxDb) gMaxDb = tr[pi][1];
-      if (tr[pi][0] > gMaxKm) gMaxKm = tr[pi][0];
+  // Build composite for popup before range calc so we use signal-only dB
+  var pCompositeData = {};
+  if (showBDir && data.fiber_traces_b) {
+    for (var pfi0 = 0; pfi0 < fibers.length; pfi0++) {
+      var pf0 = fibers[pfi0];
+      var ptA0 = data.fiber_traces && data.fiber_traces[String(pf0)];
+      var ptB0 = data.fiber_traces_b && data.fiber_traces_b[String(pf0)];
+      var pbrk0 = data.breaks && data.breaks[String(pf0)];
+      if (ptA0 || ptB0) pCompositeData[pf0] = pbuildComposite(ptA0, ptB0, pbrk0);
     }
   }
-  if (!gMaxKm) return;
+
+  var gMinDb = Infinity, gMaxDb = -Infinity, gMaxKm = 0;
+  for (var fi = 0; fi < fibers.length; fi++) {
+    var pbrk1 = data.breaks && data.breaks[String(fibers[fi])];
+    if (showBDir && pCompositeData[fibers[fi]]) {
+      var pc1 = pCompositeData[fibers[fi]];
+      for (var pci1 = 0; pci1 < pc1.length; pci1++) {
+        if (pc1[pci1].avg < gMinDb) gMinDb = pc1[pci1].avg;
+        if (pc1[pci1].avg > gMaxDb) gMaxDb = pc1[pci1].avg;
+        if (pc1[pci1].km > gMaxKm) gMaxKm = pc1[pci1].km;
+      }
+    } else {
+      var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
+      if (!tr) continue;
+      for (var pi = 0; pi < tr.length; pi++) {
+        if (pbrk1 && tr[pi][0] > pbrk1.km + 0.1) break;
+        if (tr[pi][1] < gMinDb) gMinDb = tr[pi][1];
+        if (tr[pi][1] > gMaxDb) gMaxDb = tr[pi][1];
+        if (tr[pi][0] > gMaxKm) gMaxKm = tr[pi][0];
+      }
+    }
+  }
+  if (!gMaxKm) gMaxKm = (data.meta && data.meta.span_km) || 75;
+  if (gMinDb === Infinity) return;
 
   var vKmS = zoomKmStart != null ? zoomKmStart : 0;
   var vKmE = zoomKmEnd   != null ? zoomKmEnd   : gMaxKm;
   var minDb = Infinity, maxDb = -Infinity;
   for (var fi = 0; fi < fibers.length; fi++) {
-    var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
-    if (!tr) continue;
-    for (var pi = 0; pi < tr.length; pi++) {
-      if (tr[pi][0] >= vKmS && tr[pi][0] <= vKmE) {
-        if (tr[pi][1] < minDb) minDb = tr[pi][1];
-        if (tr[pi][1] > maxDb) maxDb = tr[pi][1];
+    var pbrk2b = data.breaks && data.breaks[String(fibers[fi])];
+    if (showBDir && pCompositeData[fibers[fi]]) {
+      var pc2 = pCompositeData[fibers[fi]];
+      for (var pci2b = 0; pci2b < pc2.length; pci2b++) {
+        if (pc2[pci2b].km >= vKmS && pc2[pci2b].km <= vKmE) {
+          if (pc2[pci2b].avg < minDb) minDb = pc2[pci2b].avg;
+          if (pc2[pci2b].avg > maxDb) maxDb = pc2[pci2b].avg;
+        }
+      }
+    } else {
+      var tr = data.fiber_traces && data.fiber_traces[String(fibers[fi])];
+      if (!tr) continue;
+      for (var pi = 0; pi < tr.length; pi++) {
+        if (pbrk2b && tr[pi][0] > pbrk2b.km + 0.1) break;
+        if (tr[pi][0] >= vKmS && tr[pi][0] <= vKmE) {
+          if (tr[pi][1] < minDb) minDb = tr[pi][1];
+          if (tr[pi][1] > maxDb) maxDb = tr[pi][1];
+        }
       }
     }
   }
@@ -1371,7 +1410,7 @@ function draw2D() {
 
   // Traces
   var greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
-  var pCompositeData = {};
+  // pCompositeData already built above before dB range calc
 
   // Inline composite builder for popup (same logic as main window buildCompositeTrace)
   function pbuildComposite(ptraceA, ptraceB, pbrk) {
@@ -1393,12 +1432,13 @@ function draw2D() {
     var pbOffset = null;
     if (ptraceB && ptraceB.length >= 2 && ptraceA && ptraceA.length > 0) {
       var db_A_at_left = null;
-      if (pbrk && bLeftKm !== null && Math.abs(bLeftKm - pbrk.km) < 1.5) {
+      if (pbrk) {
         for (var i = ptraceA.length-1; i >= 0; i--) {
-          if (ptraceA[i][0] <= pbrk.km + 0.05) { db_A_at_left = ptraceA[i][1]; break; }
+          if (ptraceA[i][0] <= pbrk.km) { db_A_at_left = ptraceA[i][1]; break; }
         }
+      } else {
+        db_A_at_left = pInterp(ptraceA, bLeftKm);
       }
-      if (db_A_at_left === null) db_A_at_left = pInterp(ptraceA, bLeftKm);
       if (db_A_at_left !== null) pbOffset = db_A_at_left + db_B_far;
     }
     var kmSet = {};
@@ -1429,14 +1469,10 @@ function draw2D() {
     // ── A+B Composite mode ───────────────────────────────────────────────────
     for (var fi = 0; fi < fibers.length; fi++) {
       var fnum = fibers[fi];
-      var traceA = data.fiber_traces && data.fiber_traces[String(fnum)];
-      var traceB = data.fiber_traces_b && data.fiber_traces_b[String(fnum)];
       var brk = data.breaks && data.breaks[String(fnum)];
-      if (!traceA && !traceB) continue;
       var lw = fibers.length === 1 ? 1.8 : 0.8;
-      var comp = pbuildComposite(traceA, traceB, brk);
-      pCompositeData[fnum] = comp;
-      if (comp.length < 2) continue;
+      var comp = pCompositeData[fnum];
+      if (!comp || comp.length < 2) continue;
       ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw; ctx.setLineDash([]);
       ctx.beginPath(); var started = false;
       for (var ci = 0; ci < comp.length; ci++) {
@@ -1511,10 +1547,23 @@ function draw2D() {
       var sx = kmToX(sp.km); if (sx < ML - 5 || sx > ML + cW + 5) continue;
       for (var ei = 0; ei < cell.entries.length; ei++) {
         var entry = cell.entries[ei];
-        var trace = data.fiber_traces && data.fiber_traces[String(entry.fnum)];
-        if (!trace) continue;
+        var pbrk2 = data.breaks && data.breaks[String(entry.fnum)];
         var nearDb = null, nearDist = Infinity;
-        for (var pi = 0; pi < trace.length; pi++) { var d = Math.abs(trace[pi][0] - sp.km); if (d < nearDist) { nearDist = d; nearDb = trace[pi][1]; } }
+        if (showBDir && pCompositeData[entry.fnum]) {
+          var pComp2 = pCompositeData[entry.fnum];
+          for (var pci2 = 0; pci2 < pComp2.length; pci2++) {
+            var pd2 = Math.abs(pComp2[pci2].km - sp.km);
+            if (pd2 < nearDist) { nearDist = pd2; nearDb = pComp2[pci2].avg; }
+          }
+        } else {
+          var trace = data.fiber_traces && data.fiber_traces[String(entry.fnum)];
+          if (!trace) continue;
+          for (var pi = 0; pi < trace.length; pi++) {
+            if (pbrk2 && trace[pi][0] > pbrk2.km + 0.1) break;
+            var pd2 = Math.abs(trace[pi][0] - sp.km);
+            if (pd2 < nearDist) { nearDist = pd2; nearDb = trace[pi][1]; }
+          }
+        }
         if (nearDb === null || nearDist > 0.5) continue;
         var dotY = dbToY(nearDb);
         var color = {'break':'#FF4444','broke':'#FF8800','flagged':'#D63384','bfill':'#0070C0'}[entry.type] || '#e67e22';
