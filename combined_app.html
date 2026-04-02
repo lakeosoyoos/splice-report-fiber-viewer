@@ -248,6 +248,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 let data;
 let currentRibbon = -1, currentFiber = -1, highlightKm = null;
 let showBDir = false;
+let compositeData = {};   // fnum -> [{km, avg, aDb, bDb}] — rebuilt each draw2D call
 let scene, camera, renderer, controls, topoGroup;
 let vScale = 1;
 let zoomKmStart = null, zoomKmEnd = null;  // null = full span
@@ -410,6 +411,78 @@ function buildTable() {
 // ═══════════════════════════════════════════════════════════════════════════
 // 2D TRACE (top right) — raw dB like EXFO
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Build a composite A+B trace for one fiber.
+// traceB is in A-frame km coords (km_a = span - km_b), sorted ascending.
+// traceB[0]   = B far-end (leftmost km, lowest dB — most attenuation from B-launch)
+// traceB[last]= B launch  (rightmost km, highest dB)
+// This slopes UP left→right in raw form. We transform it:
+//   db_B_display = (db_A_at_leftmost + db_B_far) - db_b
+// so it slopes DOWN left→right at the same rate as A, stitched at the break
+// (or at km=0 for healthy fibers). Then average A and B where both exist.
+function buildCompositeTrace(fnum, traceA, traceB, brk) {
+  function interp(trace, km) {
+    if (!trace || trace.length === 0) return null;
+    if (km <= trace[0][0]) return trace[0][1];
+    if (km >= trace[trace.length-1][0]) return trace[trace.length-1][1];
+    for (let i = 0; i < trace.length - 1; i++) {
+      if (trace[i][0] <= km && trace[i+1][0] >= km) {
+        const t = (km - trace[i][0]) / (trace[i+1][0] - trace[i][0]);
+        return trace[i][1] + t * (trace[i+1][1] - trace[i][1]);
+      }
+    }
+    return null;
+  }
+
+  // Compute the additive constant for B→display transform
+  //   bOffset = db_A_at_bLeftKm + db_B_far
+  //   db_B_display(km) = bOffset - interp(traceB, km)
+  let bOffset = null;
+  const bLeftKm  = traceB && traceB.length > 0 ? traceB[0][0] : null;
+  const bRightKm = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
+  const db_B_far = traceB && traceB.length > 0 ? traceB[0][1] : null;
+
+  if (traceB && traceB.length >= 2 && traceA && traceA.length > 0) {
+    let db_A_at_left = null;
+    if (brk && bLeftKm !== null && Math.abs(bLeftKm - brk.km) < 1.5) {
+      // Near break — walk back to last real signal before cliff
+      for (let i = traceA.length - 1; i >= 0; i--) {
+        if (traceA[i][0] <= brk.km + 0.05) { db_A_at_left = traceA[i][1]; break; }
+      }
+    }
+    if (db_A_at_left === null) db_A_at_left = interp(traceA, bLeftKm);
+    if (db_A_at_left !== null) bOffset = db_A_at_left + db_B_far;
+  }
+
+  // Union of km points from both traces, sorted ascending
+  const kmSet = new Set();
+  if (traceA) traceA.forEach(p => kmSet.add(p[0]));
+  if (traceB) traceB.forEach(p => kmSet.add(p[0]));
+  const kms = [...kmSet].sort((a,b) => a-b);
+
+  const result = [];
+  for (const km of kms) {
+    // A: valid only up to the break km (don't include noise cliff in average)
+    let aDb = null;
+    if (traceA && (!brk || km <= brk.km + 0.05)) {
+      aDb = interp(traceA, km);
+    }
+    // B: valid only within B's actual coverage window
+    let bDb = null;
+    if (traceB && bOffset !== null && bLeftKm !== null && bRightKm !== null
+        && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
+      const bRaw = interp(traceB, km);
+      if (bRaw !== null) bDb = bOffset - bRaw;
+    }
+    let avg = null;
+    if      (aDb !== null && bDb !== null) avg = (aDb + bDb) / 2;
+    else if (aDb !== null)                avg = aDb;
+    else if (bDb !== null)                avg = bDb;
+    if (avg !== null) result.push({ km, avg, aDb, bDb });
+  }
+  return result;
+}
+
 function draw2D() {
   const panel = document.getElementById('top-panel');
   const canvas = document.getElementById('trace-canvas');
@@ -489,96 +562,96 @@ function draw2D() {
     ctx.fillText(sp.is_bend ? 'B' : `S${sp.splice_num}`, x, MT - 4);
   }
 
-  // Grey shades
+  // Grey shades for A-only mode (also used in composite mode)
   const greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
+  compositeData = {};
 
-  // Draw traces
-  for (let fi = 0; fi < fibers.length; fi++) {
-    const fnum = fibers[fi];
-    const trace = data.fiber_traces?.[String(fnum)];
-    if (!trace || trace.length < 2) continue;
-    const isBroken = !!data.breaks[String(fnum)];
-    const brk = data.breaks[String(fnum)];
-    const lw = fibers.length === 1 ? 1.8 : 0.8;
-
-    if (isBroken && brk) {
-      // Draw healthy portion in grey up to break
-      ctx.strokeStyle = greys[fi % greys.length];
-      ctx.lineWidth = lw;
-      ctx.beginPath();
-      let started = false;
-      for (const [km, db] of trace) {
-        if (km > brk.km) break;
-        const x = kmToX(km), y = dbToY(db);
-        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Draw break cliff + noise floor in RED
-      ctx.strokeStyle = '#FF4444';
-      ctx.lineWidth = lw + 0.5;
-      ctx.beginPath();
-      started = false;
-      for (const [km, db] of trace) {
-        if (km < brk.km - 0.5) continue;  // start just before break
-        const x = kmToX(km), y = dbToY(db);
-        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Break label
-      const bx = kmToX(brk.km);
-      const breakPt = trace.find(t => t[0] >= brk.km);
-      const by = breakPt ? dbToY(breakPt[1]) : MT + 10;
-      ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`F${fnum} ${brk.type}`, bx + 3, by - 5);
-
-      // Red dot at break point
-      ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#FF4444'; ctx.fill();
-    } else {
-      // Healthy fiber — all grey
-      ctx.strokeStyle = greys[fi % greys.length];
-      ctx.lineWidth = lw;
-      ctx.beginPath();
-      for (let i = 0; i < trace.length; i++) {
-        const x = kmToX(trace[i][0]), y = dbToY(trace[i][1]);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  }
-
-  // ── B-direction traces in A-frame composite (when A+B toggle is on) ────────
-  // B traces are horizontally flipped (km_a = span - km_b) AND vertically
-  // reflected so they slope down left→right like A traces, aligning at the
-  // B-end: db_composite = db_A_end + (db_B_launch - db_b)
   if (showBDir && data.fiber_traces_b) {
-    const bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
-                     '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
+    // ── A+B Composite mode ────────────────────────────────────────────────────
+    // Single averaged line across the full span. B is converted to slope down
+    // L→R (same as A) using: db_B_display = (db_A_at_leftmost + db_B_far) - db_b
+    // Then composite = (A + B_display) / 2 where both exist, else whichever is available.
     for (let fi = 0; fi < fibers.length; fi++) {
       const fnum = fibers[fi];
-      const traceB = data.fiber_traces_b[String(fnum)];
-      if (!traceB || traceB.length < 2) continue;
-      // traceB is sorted ascending by km_a; last point = km_a≈span = B launch
-      const db_B_launch = traceB[traceB.length - 1][1];
-      // A trace last point gives the anchor dB at span end
       const traceA = data.fiber_traces?.[String(fnum)];
-      const db_A_end = traceA && traceA.length > 0 ? traceA[traceA.length - 1][1] : db_B_launch;
+      const traceB = data.fiber_traces_b?.[String(fnum)];
+      const brk = data.breaks?.[String(fnum)];
+      if (!traceA && !traceB) continue;
       const lw = fibers.length === 1 ? 1.8 : 0.8;
-      ctx.strokeStyle = bAmbers[fi % bAmbers.length];
+
+      const comp = buildCompositeTrace(fnum, traceA, traceB, brk);
+      compositeData[fnum] = comp;
+      if (comp.length < 2) continue;
+
+      ctx.strokeStyle = greys[fi % greys.length];
       ctx.lineWidth = lw;
-      ctx.setLineDash([4, 3]);
+      ctx.setLineDash([]);
       ctx.beginPath();
       let started = false;
-      for (const [km, db] of traceB) {
-        // Reflect dB: composite slopes down L→R, anchored at db_A_end at B-end
-        const db_comp = db_A_end + (db_B_launch - db);
-        const x = kmToX(km), y = dbToY(db_comp);
+      for (const pt of comp) {
+        if (pt.km < viewKmStart - 0.1 || pt.km > viewKmEnd + 0.1) { started = false; continue; }
+        const x = kmToX(pt.km), y = dbToY(pt.avg);
         if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
       }
       ctx.stroke();
-      ctx.setLineDash([]);
+
+      // Break marker — small red dot + label at stitch point (no noise cliff)
+      if (brk) {
+        const bx = kmToX(brk.km);
+        const pt = comp.find(p => Math.abs(p.km - brk.km) < 0.5);
+        if (pt) {
+          const by = dbToY(pt.avg);
+          ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2);
+          ctx.fillStyle = '#FF4444'; ctx.fill();
+          ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+          ctx.fillText(`F${fnum} ${brk.type}`, bx + 3, by - 5);
+        }
+      }
+    }
+  } else {
+    // ── A-only mode ───────────────────────────────────────────────────────────
+    for (let fi = 0; fi < fibers.length; fi++) {
+      const fnum = fibers[fi];
+      const trace = data.fiber_traces?.[String(fnum)];
+      if (!trace || trace.length < 2) continue;
+      const brk = data.breaks?.[String(fnum)];
+      const lw = fibers.length === 1 ? 1.8 : 0.8;
+
+      if (brk) {
+        // Healthy portion in grey
+        ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+        ctx.beginPath(); let started = false;
+        for (const [km, db] of trace) {
+          if (km > brk.km) break;
+          const x = kmToX(km), y = dbToY(db);
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        // Break cliff + noise in RED
+        ctx.strokeStyle = '#FF4444'; ctx.lineWidth = lw + 0.5;
+        ctx.beginPath(); started = false;
+        for (const [km, db] of trace) {
+          if (km < brk.km - 0.5) continue;
+          const x = kmToX(km), y = dbToY(db);
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        const bx = kmToX(brk.km);
+        const breakPt = trace.find(t => t[0] >= brk.km);
+        const by = breakPt ? dbToY(breakPt[1]) : MT + 10;
+        ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText(`F${fnum} ${brk.type}`, bx + 3, by - 5);
+        ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fillStyle = '#FF4444'; ctx.fill();
+      } else {
+        // Healthy — all grey
+        ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+        ctx.beginPath();
+        for (let i = 0; i < trace.length; i++) {
+          const x = kmToX(trace[i][0]), y = dbToY(trace[i][1]);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
     }
   }
 
@@ -712,7 +785,8 @@ function draw2D() {
   const _lw = fibers.length === 1 ? 1.8 : 0.8;
   const _kmToX = kmToX;
   const _dbToY = dbToY;
-  window._highlightParams = { lw: _lw, kmToX: _kmToX, dbToY: _dbToY };
+  const _xToKm = (x) => viewKmStart + (x - ML) / cW * (viewKmEnd - viewKmStart);
+  window._highlightParams = { lw: _lw, kmToX: _kmToX, dbToY: _dbToY, xToKm: _xToKm, fibers: [...fibers] };
 
   // Fiber legend
   ctx.font = '8px Consolas, monospace'; ctx.textAlign = 'right';
@@ -1013,6 +1087,40 @@ window.loadDataAndStart = async function() {
       return;
     }
 
+    // Composite A+B hover — show A / B / avg at mouse km
+    if (showBDir && window._highlightParams?.xToKm && Object.keys(compositeData).length > 0) {
+      const kmAtMouse = window._highlightParams.xToKm(mx);
+      const fiberList = window._highlightParams.fibers || [];
+      let rows = `<div style="color:#888;font-size:9px;margin-bottom:2px">${kmAtMouse.toFixed(2)} km</div>`;
+      let anyHit = false;
+      for (const fnum of fiberList) {
+        const comp = compositeData[fnum];
+        if (!comp || comp.length === 0) continue;
+        let near = null, nearDist = Infinity;
+        for (const pt of comp) {
+          const d = Math.abs(pt.km - kmAtMouse);
+          if (d < nearDist) { nearDist = d; near = pt; }
+        }
+        if (!near || nearDist > 1.5) continue;
+        anyHit = true;
+        const aStr = near.aDb != null ? `A→B: ${near.aDb.toFixed(2)}` : 'A→B: —';
+        const bStr = near.bDb != null ? `B→A: ${near.bDb.toFixed(2)}` : 'B→A: —';
+        rows += `<div style="margin:1px 0"><b style="color:#1F4E79">F${fnum}</b> &nbsp;`
+              + `<span style="color:#555">${aStr}</span> &nbsp; `
+              + `<span style="color:#c87533">${bStr}</span> &nbsp; `
+              + `<b>Avg: ${near.avg.toFixed(2)} dB</b></div>`;
+      }
+      if (anyHit) {
+        traceTooltip.innerHTML = rows;
+        traceTooltip.style.display = 'block';
+        traceTooltip.style.left = (mx + 15) + 'px';
+        traceTooltip.style.top  = (my + 15) + 'px';
+        traceCanvas.style.cursor = 'crosshair';
+        if (hoveredFnum !== null) { hoveredFnum = null; }
+        return;
+      }
+    }
+
     // No dot hit — clear highlight if needed
     if (hoveredFnum !== null) {
       hoveredFnum = null;
@@ -1213,71 +1321,133 @@ function draw2D() {
 
   // Traces
   var greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
-  for (var fi = 0; fi < fibers.length; fi++) {
-    var fnum = fibers[fi];
-    var trace = data.fiber_traces && data.fiber_traces[String(fnum)];
-    if (!trace || trace.length < 2) continue;
-    var brk = data.breaks && data.breaks[String(fnum)];
-    var lw = fibers.length === 1 ? 1.8 : 0.8;
-    if (brk) {
-      ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
-      ctx.beginPath(); var started = false;
-      for (var pi = 0; pi < trace.length; pi++) {
-        if (trace[pi][0] > brk.km) break;
-        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
-        if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
+  var pCompositeData = {};
+
+  // Inline composite builder for popup (same logic as main window buildCompositeTrace)
+  function pbuildComposite(ptraceA, ptraceB, pbrk) {
+    function pInterp(tr, km) {
+      if (!tr || tr.length === 0) return null;
+      if (km <= tr[0][0]) return tr[0][1];
+      if (km >= tr[tr.length-1][0]) return tr[tr.length-1][1];
+      for (var i = 0; i < tr.length-1; i++) {
+        if (tr[i][0] <= km && tr[i+1][0] >= km) {
+          var t = (km - tr[i][0]) / (tr[i+1][0] - tr[i][0]);
+          return tr[i][1] + t*(tr[i+1][1]-tr[i][1]);
+        }
       }
-      ctx.stroke();
-      ctx.strokeStyle = '#FF4444'; ctx.lineWidth = lw + 0.5;
-      ctx.beginPath(); started = false;
-      for (var pi = 0; pi < trace.length; pi++) {
-        if (trace[pi][0] < brk.km - 0.5) continue;
-        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
-        if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
-      }
-      ctx.stroke();
-      var bx = kmToX(brk.km);
-      var bpt = null; for (var pi = 0; pi < trace.length; pi++) { if (trace[pi][0] >= brk.km) { bpt = trace[pi]; break; } }
-      var by = bpt ? dbToY(bpt[1]) : MT + 10;
-      ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('F' + fnum + ' ' + brk.type, bx + 3, by - 5);
-      ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fillStyle = '#FF4444'; ctx.fill();
-    } else {
-      ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
-      ctx.beginPath();
-      for (var pi = 0; pi < trace.length; pi++) {
-        var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
-        if (pi === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
-      }
-      ctx.stroke();
+      return null;
     }
+    var bLeftKm  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
+    var bRightKm = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
+    var db_B_far = ptraceB && ptraceB.length > 0 ? ptraceB[0][1] : null;
+    var pbOffset = null;
+    if (ptraceB && ptraceB.length >= 2 && ptraceA && ptraceA.length > 0) {
+      var db_A_at_left = null;
+      if (pbrk && bLeftKm !== null && Math.abs(bLeftKm - pbrk.km) < 1.5) {
+        for (var i = ptraceA.length-1; i >= 0; i--) {
+          if (ptraceA[i][0] <= pbrk.km + 0.05) { db_A_at_left = ptraceA[i][1]; break; }
+        }
+      }
+      if (db_A_at_left === null) db_A_at_left = pInterp(ptraceA, bLeftKm);
+      if (db_A_at_left !== null) pbOffset = db_A_at_left + db_B_far;
+    }
+    var kmSet = {};
+    if (ptraceA) ptraceA.forEach(function(p) { kmSet[p[0]] = 1; });
+    if (ptraceB) ptraceB.forEach(function(p) { kmSet[p[0]] = 1; });
+    var kms = Object.keys(kmSet).map(Number).sort(function(a,b){return a-b;});
+    var res = [];
+    for (var ki = 0; ki < kms.length; ki++) {
+      var km = kms[ki];
+      var aDb = null;
+      if (ptraceA && (!pbrk || km <= pbrk.km + 0.05)) aDb = pInterp(ptraceA, km);
+      var bDb = null;
+      if (ptraceB && pbOffset !== null && bLeftKm !== null && bRightKm !== null
+          && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
+        var bRaw = pInterp(ptraceB, km);
+        if (bRaw !== null) bDb = pbOffset - bRaw;
+      }
+      var avg = null;
+      if (aDb !== null && bDb !== null) avg = (aDb + bDb) / 2;
+      else if (aDb !== null) avg = aDb;
+      else if (bDb !== null) avg = bDb;
+      if (avg !== null) res.push({ km: km, avg: avg, aDb: aDb, bDb: bDb });
+    }
+    return res;
   }
 
-  // ── B-direction traces in A-frame composite ──────────────────────────────
-  // Horizontally AND vertically reflected so B slopes down L→R like A.
-  // db_composite = db_A_end + (db_B_launch - db_b), anchored at B-end.
   if (showBDir && data.fiber_traces_b) {
-    var bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
-                   '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
-    for (var bfi = 0; bfi < fibers.length; bfi++) {
-      var bfnum = fibers[bfi];
-      var traceB = data.fiber_traces_b[String(bfnum)];
-      if (!traceB || traceB.length < 2) continue;
-      var db_B_launch = traceB[traceB.length - 1][1];
-      var traceA2 = data.fiber_traces && data.fiber_traces[String(bfnum)];
-      var db_A_end = (traceA2 && traceA2.length > 0) ? traceA2[traceA2.length - 1][1] : db_B_launch;
-      var blw = fibers.length === 1 ? 1.8 : 0.8;
-      ctx.strokeStyle = bAmbers[bfi % bAmbers.length];
-      ctx.lineWidth = blw;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); var bStarted = false;
-      for (var bpi = 0; bpi < traceB.length; bpi++) {
-        var db_comp = db_A_end + (db_B_launch - traceB[bpi][1]);
-        var bx2 = kmToX(traceB[bpi][0]), by2 = dbToY(db_comp);
-        if (!bStarted) { ctx.moveTo(bx2, by2); bStarted = true; } else ctx.lineTo(bx2, by2);
+    // ── A+B Composite mode ───────────────────────────────────────────────────
+    for (var fi = 0; fi < fibers.length; fi++) {
+      var fnum = fibers[fi];
+      var traceA = data.fiber_traces && data.fiber_traces[String(fnum)];
+      var traceB = data.fiber_traces_b && data.fiber_traces_b[String(fnum)];
+      var brk = data.breaks && data.breaks[String(fnum)];
+      if (!traceA && !traceB) continue;
+      var lw = fibers.length === 1 ? 1.8 : 0.8;
+      var comp = pbuildComposite(traceA, traceB, brk);
+      pCompositeData[fnum] = comp;
+      if (comp.length < 2) continue;
+      ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw; ctx.setLineDash([]);
+      ctx.beginPath(); var started = false;
+      for (var ci = 0; ci < comp.length; ci++) {
+        var pt = comp[ci];
+        if (pt.km < vKmS - 0.1 || pt.km > vKmE + 0.1) { started = false; continue; }
+        var tx = kmToX(pt.km), ty = dbToY(pt.avg);
+        if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
       }
       ctx.stroke();
-      ctx.setLineDash([]);
+      if (brk) {
+        var bx = kmToX(brk.km);
+        var bpt = null;
+        for (var ci = 0; ci < comp.length; ci++) { if (Math.abs(comp[ci].km - brk.km) < 0.5) { bpt = comp[ci]; break; } }
+        if (bpt) {
+          var by = dbToY(bpt.avg);
+          ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fillStyle = '#FF4444'; ctx.fill();
+          ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+          ctx.fillText('F' + fnum + ' ' + brk.type, bx + 3, by - 5);
+        }
+      }
+    }
+  } else {
+    // ── A-only mode ──────────────────────────────────────────────────────────
+    for (var fi = 0; fi < fibers.length; fi++) {
+      var fnum = fibers[fi];
+      var trace = data.fiber_traces && data.fiber_traces[String(fnum)];
+      if (!trace || trace.length < 2) continue;
+      var brk = data.breaks && data.breaks[String(fnum)];
+      var lw = fibers.length === 1 ? 1.8 : 0.8;
+      if (brk) {
+        ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+        ctx.beginPath(); var started = false;
+        for (var pi = 0; pi < trace.length; pi++) {
+          if (trace[pi][0] > brk.km) break;
+          var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+          if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#FF4444'; ctx.lineWidth = lw + 0.5;
+        ctx.beginPath(); started = false;
+        for (var pi = 0; pi < trace.length; pi++) {
+          if (trace[pi][0] < brk.km - 0.5) continue;
+          var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+          if (!started) { ctx.moveTo(tx, ty); started = true; } else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+        var bx = kmToX(brk.km);
+        var bpt = null; for (var pi = 0; pi < trace.length; pi++) { if (trace[pi][0] >= brk.km) { bpt = trace[pi]; break; } }
+        var by = bpt ? dbToY(bpt[1]) : MT + 10;
+        ctx.fillStyle = '#FF4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText('F' + fnum + ' ' + brk.type, bx + 3, by - 5);
+        ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fillStyle = '#FF4444'; ctx.fill();
+      } else {
+        ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
+        ctx.beginPath();
+        for (var pi = 0; pi < trace.length; pi++) {
+          var tx = kmToX(trace[pi][0]), ty = dbToY(trace[pi][1]);
+          if (pi === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+      }
     }
   }
 
@@ -1418,6 +1588,45 @@ window.addEventListener('load', function() {
       tooltip.innerHTML = '<b style="color:' + hit.color + '">Fiber ' + hit.fnum + '</b><br>' + hit.splice_label + '<br><span style="font-size:10px;color:#888">' + hit.text + '</span>';
       tooltip.style.display = 'block';
       tooltip.style.left = (mx + 15) + 'px'; tooltip.style.top = (my + 15) + 'px';
+    } else if (showBDir && Object.keys(pCompositeData).length > 0) {
+      // A+B composite hover: show A / B→A / Avg at mouse km
+      var prect = pcanvas.getBoundingClientRect();
+      var pFullKm = (data && data.meta && data.meta.span_km) || 75;
+      var pvKmS = zoomKmStart != null ? zoomKmStart : 0;
+      var pvKmE = zoomKmEnd   != null ? zoomKmEnd   : pFullKm;
+      var pML = 45, pCW = prect.width - 60;
+      var kmAtMouse = pvKmS + (mx - pML) / pCW * (pvKmE - pvKmS);
+      var pFibers = [];
+      if (currentFiber > 0) { pFibers = [currentFiber]; }
+      else if (currentRibbon >= 0 && data) {
+        var pRib = data.ribbons[currentRibbon];
+        for (var pfi = pRib.f_start; pfi <= pRib.f_end; pfi++) pFibers.push(pfi);
+      }
+      var rows = '<div style="color:#888;font-size:9px;margin-bottom:2px">' + kmAtMouse.toFixed(2) + ' km</div>';
+      var anyHit = false;
+      for (var pfi = 0; pfi < pFibers.length; pfi++) {
+        var pfnum = pFibers[pfi];
+        var pComp = pCompositeData[pfnum];
+        if (!pComp || pComp.length === 0) continue;
+        var near = null, nearDist = Infinity;
+        for (var pci = 0; pci < pComp.length; pci++) {
+          var pd = Math.abs(pComp[pci].km - kmAtMouse);
+          if (pd < nearDist) { nearDist = pd; near = pComp[pci]; }
+        }
+        if (!near || nearDist > 1.5) continue;
+        anyHit = true;
+        var aStr = near.aDb != null ? 'A→B: ' + near.aDb.toFixed(2) : 'A→B: —';
+        var bStr = near.bDb != null ? 'B→A: ' + near.bDb.toFixed(2) : 'B→A: —';
+        rows += '<div style="margin:1px 0"><b style="color:#1F4E79">F' + pfnum + '</b> &nbsp;'
+              + '<span style="color:#555">' + aStr + '</span> &nbsp; '
+              + '<span style="color:#c87533">' + bStr + '</span> &nbsp; '
+              + '<b>Avg: ' + near.avg.toFixed(2) + ' dB</b></div>';
+      }
+      if (anyHit) {
+        tooltip.innerHTML = rows;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (mx + 15) + 'px'; tooltip.style.top = (my + 15) + 'px';
+      } else { tooltip.style.display = 'none'; }
     } else { tooltip.style.display = 'none'; }
   });
   pcanvas.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
