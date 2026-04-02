@@ -129,14 +129,21 @@ def main():
     for i, sp in enumerate(splices_raw):
         splices.append({**sp, 'splice_num': i + 1, 'is_bend': False})
 
-    # Span
-    all_ends = sorted([e['dist_km'] for r in fibers_a.values()
-                       for e in r['events'] if e.get('is_end')])
-    if all_ends:
-        top_q = all_ends[int(len(all_ends) * 0.75):]
-        span_km = round(float(np.median(top_q)), 2)
-    else:
-        span_km = 0
+    # Span — use top 10% of A-ends + median of B-ends, take the max.
+    # Broken A fibers end early so top-10% avoids them pulling span low.
+    # B-direction end events = full span distance, most reliable.
+    all_ends_a = sorted([e['dist_km'] for r in fibers_a.values()
+                         for e in r['events'] if e.get('is_end')])
+    all_ends_b = sorted([e['dist_km'] for r in fibers_b.values()
+                         for e in r.get('events', []) if e.get('is_end')])
+    candidates = []
+    if all_ends_a:
+        top_a = all_ends_a[int(len(all_ends_a) * 0.90):]
+        candidates.append(float(np.median(top_a)))
+    if all_ends_b:
+        top_b = all_ends_b[int(len(all_ends_b) * 0.50):]
+        candidates.append(float(np.median(top_b)))
+    span_km = round(max(candidates), 2) if candidates else 0
     print(f"  {len(fibers_a)} fibers, {span_km:.1f} km span, {len(splices)} splice positions")
 
     print("Running Pass 1 (splice position analysis)...")

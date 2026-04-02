@@ -477,13 +477,26 @@ if run_button and has_a:
     splices = [{**sp, 'splice_num': i + 1, 'is_bend': False}
                for i, sp in enumerate(splices_raw)]
 
-    all_ends = sorted([e['dist_km'] for r in fibers_a.values()
-                       for e in r['events'] if e.get('is_end')])
-    if all_ends:
-        top_q = all_ends[int(len(all_ends) * 0.75):]
-        span_km = round(float(np.median(top_q)), 2)
-    else:
-        span_km = 0
+    # Compute span_km from the top of A-direction end events (avoids broken fibers
+    # pulling the estimate low) and cross-check with B-direction end events.
+    # B-direction fibers launch from the far end and their end event = full span,
+    # so they give the most reliable span estimate when A fibers are broken.
+    all_ends_a = sorted([e['dist_km'] for r in fibers_a.values()
+                         for e in r['events'] if e.get('is_end')])
+    all_ends_b = sorted([e['dist_km'] for r in (fibers_b or {}).values()
+                         for e in r.get('events', []) if e.get('is_end')])
+
+    candidates = []
+    if all_ends_a:
+        # Top 10% of A-direction ends (only the longest, avoiding broken fibers)
+        top_a = all_ends_a[int(len(all_ends_a) * 0.90):]
+        candidates.append(float(np.median(top_a)))
+    if all_ends_b:
+        # Top 50% of B-direction ends (B end event = full span distance)
+        top_b = all_ends_b[int(len(all_ends_b) * 0.50):]
+        candidates.append(float(np.median(top_b)))
+
+    span_km = round(max(candidates), 2) if candidates else 0
 
     bar.progress(0.40, text=f"Pass 1: analyzing {n_fibers} fibers x {len(splices)} splices...")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
