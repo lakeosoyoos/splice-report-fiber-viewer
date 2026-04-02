@@ -434,46 +434,62 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     return null;
   }
 
-  // Compute the additive constant for B→display transform
-  //   bOffset = db_A_at_bLeftKm + db_B_far
-  //   db_B_display(km) = bOffset - interp(traceB, km)
-  let bOffset = null;
+  // B traces in fiber_traces_b may extend the full span in A-frame because
+  // the B-direction SOR doesn't know where the A-direction break is.
+  // For broken fibers, B's data before brk.km in A-frame is B's noise
+  // (the region B can't see past the break either).
+  //
+  // Stitch rule:
+  //   - bStitchKm = brk.km if broken, else traceB[0][0] (B's actual far-end)
+  //   - anchor: db_A_at_stitch + db_B_at_stitch = bOffset
+  //   - db_B_display(km) = bOffset - interp(traceB, km)
+  //   - B is only included for km >= bStitchKm (A-frame)
+
   const bLeftKm  = traceB && traceB.length > 0 ? traceB[0][0] : null;
   const bRightKm = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
-  const db_B_far = traceB && traceB.length > 0 ? traceB[0][1] : null;
 
-  if (traceB && traceB.length >= 2 && traceA && traceA.length > 0) {
-    let db_A_at_left = null;
-    if (brk) {
-      // Walk backwards to find the last real signal point STRICTLY at or before
-      // brk.km — the noise cliff is inserted at brk.km+0.01 so we must not
-      // overshoot that boundary by even 0.05 km.
-      for (let i = traceA.length - 1; i >= 0; i--) {
-        if (traceA[i][0] <= brk.km) { db_A_at_left = traceA[i][1]; break; }
+  // The km at which we stitch A→B
+  const bStitchKm = (brk && traceB) ? brk.km : bLeftKm;
+
+  let bOffset = null;
+  if (traceB && traceB.length >= 2 && bStitchKm !== null) {
+    // A signal at the stitch km (last real A point before cliff)
+    let db_A_stitch = null;
+    if (traceA && traceA.length > 0) {
+      if (brk) {
+        for (let i = traceA.length - 1; i >= 0; i--) {
+          if (traceA[i][0] <= brk.km) { db_A_stitch = traceA[i][1]; break; }
+        }
+      } else {
+        db_A_stitch = interp(traceA, bStitchKm);
       }
-    } else {
-      db_A_at_left = interp(traceA, bLeftKm);
     }
-    if (db_A_at_left !== null) bOffset = db_A_at_left + db_B_far;
+    // B signal at the stitch km
+    const db_B_stitch = interp(traceB, bStitchKm);
+    if (db_A_stitch !== null && db_B_stitch !== null) {
+      // bOffset such that db_B_display(bStitchKm) = db_A_stitch
+      // db_B_display = bOffset - db_b  =>  bOffset = db_A_stitch + db_B_stitch
+      bOffset = db_A_stitch + db_B_stitch;
+    }
   }
 
   // Union of km points from both traces, sorted ascending
   const kmSet = new Set();
-  if (traceA) traceA.forEach(p => kmSet.add(p[0]));
-  if (traceB) traceB.forEach(p => kmSet.add(p[0]));
+  if (traceA) traceA.forEach(p => { if (!brk || p[0] <= brk.km) kmSet.add(p[0]); });
+  if (traceB && bStitchKm !== null) traceB.forEach(p => { if (p[0] >= bStitchKm - 0.05) kmSet.add(p[0]); });
   const kms = [...kmSet].sort((a,b) => a-b);
 
   const result = [];
   for (const km of kms) {
-    // A: valid only up to the break km (don't include noise cliff in average)
+    // A: valid only up to and including break km
     let aDb = null;
-    if (traceA && (!brk || km <= brk.km + 0.05)) {
+    if (traceA && (!brk || km <= brk.km)) {
       aDb = interp(traceA, km);
     }
-    // B: valid only within B's actual coverage window
+    // B: valid only from stitch km onward
     let bDb = null;
-    if (traceB && bOffset !== null && bLeftKm !== null && bRightKm !== null
-        && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
+    if (traceB && bOffset !== null && bStitchKm !== null && bRightKm !== null
+        && km >= bStitchKm - 0.05 && km <= bRightKm + 0.05) {
       const bRaw = interp(traceB, km);
       if (bRaw !== null) bDb = bOffset - bRaw;
     }
@@ -539,7 +555,8 @@ function draw2D() {
       }
     }
   }
-  if (globalMaxKm === 0) globalMaxKm = data.meta?.span_km || 75;
+  // Always use span_km as the km extent so all splices are visible
+  globalMaxKm = data.meta?.span_km || globalMaxKm || 75;
   if (globalMinDb === Infinity) return;
 
   // Apply zoom range
@@ -1354,7 +1371,7 @@ function draw2D() {
       }
     }
   }
-  if (!gMaxKm) gMaxKm = (data.meta && data.meta.span_km) || 75;
+  gMaxKm = (data.meta && data.meta.span_km) || gMaxKm || 75;
   if (gMinDb === Infinity) return;
 
   var vKmS = zoomKmStart != null ? zoomKmStart : 0;
@@ -1428,31 +1445,34 @@ function draw2D() {
     }
     var bLeftKm  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
     var bRightKm = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
-    var db_B_far = ptraceB && ptraceB.length > 0 ? ptraceB[0][1] : null;
+    var bStitchKm = (pbrk && ptraceB) ? pbrk.km : bLeftKm;
     var pbOffset = null;
-    if (ptraceB && ptraceB.length >= 2 && ptraceA && ptraceA.length > 0) {
-      var db_A_at_left = null;
-      if (pbrk) {
-        for (var i = ptraceA.length-1; i >= 0; i--) {
-          if (ptraceA[i][0] <= pbrk.km) { db_A_at_left = ptraceA[i][1]; break; }
+    if (ptraceB && ptraceB.length >= 2 && bStitchKm !== null) {
+      var db_A_stitch = null;
+      if (ptraceA && ptraceA.length > 0) {
+        if (pbrk) {
+          for (var i = ptraceA.length-1; i >= 0; i--) {
+            if (ptraceA[i][0] <= pbrk.km) { db_A_stitch = ptraceA[i][1]; break; }
+          }
+        } else {
+          db_A_stitch = pInterp(ptraceA, bStitchKm);
         }
-      } else {
-        db_A_at_left = pInterp(ptraceA, bLeftKm);
       }
-      if (db_A_at_left !== null) pbOffset = db_A_at_left + db_B_far;
+      var db_B_stitch = pInterp(ptraceB, bStitchKm);
+      if (db_A_stitch !== null && db_B_stitch !== null) pbOffset = db_A_stitch + db_B_stitch;
     }
     var kmSet = {};
-    if (ptraceA) ptraceA.forEach(function(p) { kmSet[p[0]] = 1; });
-    if (ptraceB) ptraceB.forEach(function(p) { kmSet[p[0]] = 1; });
+    if (ptraceA) ptraceA.forEach(function(p) { if (!pbrk || p[0] <= pbrk.km) kmSet[p[0]] = 1; });
+    if (ptraceB && bStitchKm !== null) ptraceB.forEach(function(p) { if (p[0] >= bStitchKm - 0.05) kmSet[p[0]] = 1; });
     var kms = Object.keys(kmSet).map(Number).sort(function(a,b){return a-b;});
     var res = [];
     for (var ki = 0; ki < kms.length; ki++) {
       var km = kms[ki];
       var aDb = null;
-      if (ptraceA && (!pbrk || km <= pbrk.km + 0.05)) aDb = pInterp(ptraceA, km);
+      if (ptraceA && (!pbrk || km <= pbrk.km)) aDb = pInterp(ptraceA, km);
       var bDb = null;
-      if (ptraceB && pbOffset !== null && bLeftKm !== null && bRightKm !== null
-          && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
+      if (ptraceB && pbOffset !== null && bStitchKm !== null && bRightKm !== null
+          && km >= bStitchKm - 0.05 && km <= bRightKm + 0.05) {
         var bRaw = pInterp(ptraceB, km);
         if (bRaw !== null) bDb = pbOffset - bRaw;
       }
