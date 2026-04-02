@@ -402,14 +402,14 @@ def build_viewer_html(combined_data):
         html = f.read()
 
     data_js = json.dumps(combined_data, separators=(',', ':'))
+    # Escape </script> so the JSON blob can't close the script tag early
+    data_js = data_js.replace('</', '<\\/')
 
     # Inject data and auto-start — replace the loadDataAndStart function body
     # to use inline data first, and remove the setup screen auto-show
-    inject = f"""
-<script>
-window._SPLICE_DATA = {data_js};
-</script>
-"""
+    inject = (
+        '\n<script>\nwindow._SPLICE_DATA = ' + data_js + ';\n</script>\n'
+    )
     # Insert injection before closing </head>
     html = html.replace('</head>', inject + '</head>', 1)
 
@@ -457,6 +457,7 @@ window.addEventListener('load', () => { loadDataAndStart(); });"""
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 if run_button and has_a:
+  try:
     if zip_a:
         bar = st.progress(0.0, text="Extracting ZIPs...")
         dir_a = stage_zip(zip_a, "splice_a_")
@@ -654,6 +655,10 @@ if run_button and has_a:
     st.session_state.done = True
     bar.progress(1.0, text="Done!")
     bar.empty()
+  except Exception as _e:
+    import traceback
+    st.error(f"Error generating viewer: {_e}")
+    st.code(traceback.format_exc())
 
 
 # ── Display ────────────────────────────────────────────────────────────────────
