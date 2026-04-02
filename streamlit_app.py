@@ -758,15 +758,39 @@ else:
         </div>
         <div class="tc-card" style="flex:1;">
             <div class="tc-card-title">Viewer Color Key</div>
-            <div class="tc-legend">
-                <span style="background:#FFC7CE;color:#333;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #e0a0b0;">F12 0.183 dB — A+B Reburn</span>
-                <span style="background:#FF4444;color:#fff;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;">F85 BREAK — A→B 22.14 km</span>
-                <span style="background:#FF8800;color:#fff;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;">F107 BROKE — A→B 31.40 km</span>
-                <span style="background:#BDD7EE;color:#1F4E79;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #90bcd8;">F22 0.091 dB — B-fill</span>
-                <span style="background:#FFF2CC;color:#7F6000;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #e0d080;">F44 0.062 dB — A-only</span>
-                <span style="background:#FFD700;color:#4B3000;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #c8a000;">F61 0.214 dB — A-only &#9888;</span>
-                <span style="background:#E8D5F5;color:#4B0082;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #c0a0e0;">F33 0.055 dB — B-only</span>
-                <span style="background:#C084FC;color:#1A0033;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #9040d0;">F78 0.241 dB — B-only &#9888;</span>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-top:4px;">
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#FFC7CE;color:#1a1a1a;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">325 .172</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">A+B bidirectional reburn</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#FF4444;color:#ffffff;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">107 BREAK .210</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">1F reflective break</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#FF8800;color:#ffffff;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">107 broke</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">trace terminates mid-span</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#BDD7EE;color:#1F4E79;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">214 .188 (B-fill)</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">B-direction past a break</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#FFF2CC;color:#7F6000;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">83 .151(A) ~.075bd</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">A-only, est. bidir below threshold</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#FFD700;color:#4B3000;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">122 .285(A) &#9888;.143bd</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">A-only, est. bidir above threshold</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#E8D5F5;color:#4B0082;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">430 .161(B) ~.081bd</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">B-only, est. bidir below threshold</div>
+                </div>
+                <div style="display:flex;align-items:center;">
+                    <div style="background:#C084FC;color:#1A0033;font-family:'Nunito',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border:1px solid rgba(0,0,0,0.14);white-space:nowrap;width:148px;flex-shrink:0;">325 .340(B) &#9888;.170bd</div>
+                    <div style="font-family:'Nunito',sans-serif;font-size:12px;font-weight:600;color:#444;padding-left:12px;">B-only, est. bidir above threshold</div>
+                </div>
             </div>
         </div>
     </div>
