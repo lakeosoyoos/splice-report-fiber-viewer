@@ -549,7 +549,10 @@ function draw2D() {
     }
   }
 
-  // ── B-direction traces in A-frame (when A+B toggle is on) ────────────────
+  // ── B-direction traces in A-frame composite (when A+B toggle is on) ────────
+  // B traces are horizontally flipped (km_a = span - km_b) AND vertically
+  // reflected so they slope down left→right like A traces, aligning at the
+  // B-end: db_composite = db_A_end + (db_B_launch - db_b)
   if (showBDir && data.fiber_traces_b) {
     const bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
                      '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
@@ -557,18 +560,25 @@ function draw2D() {
       const fnum = fibers[fi];
       const traceB = data.fiber_traces_b[String(fnum)];
       if (!traceB || traceB.length < 2) continue;
+      // traceB is sorted ascending by km_a; last point = km_a≈span = B launch
+      const db_B_launch = traceB[traceB.length - 1][1];
+      // A trace last point gives the anchor dB at span end
+      const traceA = data.fiber_traces?.[String(fnum)];
+      const db_A_end = traceA && traceA.length > 0 ? traceA[traceA.length - 1][1] : db_B_launch;
       const lw = fibers.length === 1 ? 1.8 : 0.8;
       ctx.strokeStyle = bAmbers[fi % bAmbers.length];
       ctx.lineWidth = lw;
-      ctx.setLineDash([4, 3]);   // dashed so it's visually distinct from A trace
+      ctx.setLineDash([4, 3]);
       ctx.beginPath();
       let started = false;
       for (const [km, db] of traceB) {
-        const x = kmToX(km), y = dbToY(db);
+        // Reflect dB: composite slopes down L→R, anchored at db_A_end at B-end
+        const db_comp = db_A_end + (db_B_launch - db);
+        const x = kmToX(km), y = dbToY(db_comp);
         if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
       }
       ctx.stroke();
-      ctx.setLineDash([]);   // reset dash
+      ctx.setLineDash([]);
     }
   }
 
@@ -1243,7 +1253,9 @@ function draw2D() {
     }
   }
 
-  // ── B-direction traces in A-frame ────────────────────────────────────────
+  // ── B-direction traces in A-frame composite ──────────────────────────────
+  // Horizontally AND vertically reflected so B slopes down L→R like A.
+  // db_composite = db_A_end + (db_B_launch - db_b), anchored at B-end.
   if (showBDir && data.fiber_traces_b) {
     var bAmbers = ['#c87533','#b86820','#d48540','#a05818','#e09050','#c07030',
                    '#b87828','#d07838','#c06828','#b88040','#d06020','#c07828'];
@@ -1251,13 +1263,17 @@ function draw2D() {
       var bfnum = fibers[bfi];
       var traceB = data.fiber_traces_b[String(bfnum)];
       if (!traceB || traceB.length < 2) continue;
+      var db_B_launch = traceB[traceB.length - 1][1];
+      var traceA2 = data.fiber_traces && data.fiber_traces[String(bfnum)];
+      var db_A_end = (traceA2 && traceA2.length > 0) ? traceA2[traceA2.length - 1][1] : db_B_launch;
       var blw = fibers.length === 1 ? 1.8 : 0.8;
       ctx.strokeStyle = bAmbers[bfi % bAmbers.length];
       ctx.lineWidth = blw;
       ctx.setLineDash([4, 3]);
       ctx.beginPath(); var bStarted = false;
       for (var bpi = 0; bpi < traceB.length; bpi++) {
-        var bx2 = kmToX(traceB[bpi][0]), by2 = dbToY(traceB[bpi][1]);
+        var db_comp = db_A_end + (db_B_launch - traceB[bpi][1]);
+        var bx2 = kmToX(traceB[bpi][0]), by2 = dbToY(db_comp);
         if (!bStarted) { ctx.moveTo(bx2, by2); bStarted = true; } else ctx.lineTo(bx2, by2);
       }
       ctx.stroke();
