@@ -495,9 +495,55 @@ if run_button and has_a:
         # only if B ends are longer than A ends (means B sees past A breaks)
         candidates.append(max(all_ends_b))
 
-    span_km = round(max(candidates), 2) if candidates else 0
+    span_km_from_events = round(max(candidates), 2) if candidates else 0
 
-    bar.progress(0.40, text=f"Pass 1: analyzing {n_fibers} fibers x {len(splices)} splices...")
+    # Compute true span from A+B end event composite.
+    # For any given fiber fnum, the A-direction end event is at dist_a km from A,
+    # and the B-direction end event is at dist_b km from B.
+    # If the fiber is intact:  dist_a == dist_b == span
+    # If the fiber is broken:  dist_a + dist_b == span  (both see the same break)
+    # So: span = dist_a + dist_b for broken fibers,  or = dist_a (or dist_b) for intact.
+    # We collect all estimates and take the median to be robust.
+    def _end_km(r):
+        for e in r.get('events', []):
+            if e.get('is_end') and e.get('dist_km', 0) > 0:
+                return float(e['dist_km'])
+        return None
+
+    span_estimates = []
+    # Matched fibers — fiber numbers present in both directions
+    if fibers_b:
+        common = set(fibers_a.keys()) & set(fibers_b.keys())
+        for fnum in common:
+            a_end = _end_km(fibers_a[fnum])
+            b_end = _end_km(fibers_b[fnum])
+            if a_end and b_end:
+                # A end + B end = span (works for broken AND intact fibers)
+                span_estimates.append(a_end + b_end)
+    # Unmatched A fibers — just use their end km (healthy fibers reach full span)
+    for fnum, r in fibers_a.items():
+        a_end = _end_km(r)
+        if a_end:
+            span_estimates.append(a_end)
+    if fibers_b:
+        for fnum, r in fibers_b.items():
+            b_end = _end_km(r)
+            if b_end:
+                span_estimates.append(b_end)
+
+    span_km = span_km_from_events
+    if span_estimates:
+        # The true span appears as the dominant cluster in span_estimates.
+        # Both intact fibers (dist_a alone) and broken fibers (dist_a + dist_b)
+        # should converge on the same value. Use the mode/peak.
+        estimates_arr = np.array(sorted(span_estimates))
+        # Filter to estimates within 20% of the median to remove outliers
+        med = float(np.median(estimates_arr))
+        good = estimates_arr[(estimates_arr >= med * 0.85) & (estimates_arr <= med * 1.15)]
+        if len(good) >= 1:
+            span_km = round(float(np.median(good)), 2)
+
+    bar.progress(0.40, text=f"Pass 1: analyzing {n_fibers} fibers x {len(splices)} splices... (span {span_km} km)")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
     bar.progress(0.60, text="Pass 2: scanning B-direction for missed events...")
