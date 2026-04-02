@@ -518,38 +518,23 @@ if run_button and has_a:
             b_end = _end_km(fibers_b[fnum])
             if not a_end or not b_end:
                 continue
-            # Healthy fiber: A and B both cover the full span from their end,
-            #   so dist_a ≈ dist_b ≈ span  →  use dist_a directly
-            # Broken fiber: dist_a = break_km, dist_b = span - break_km,
-            #   dist_a + dist_b = span  →  use the sum
+            # Healthy: dist_a ≈ dist_b ≈ span → use dist_a
+            # Broken:  dist_a + dist_b = span → use sum
             if abs(a_end - b_end) / max(a_end, b_end) < 0.10:
-                # Ends match within 10% → healthy → span = dist_a
                 span_estimates.append(a_end)
             else:
-                # Ends differ → broken → span = dist_a + dist_b
                 span_estimates.append(a_end + b_end)
-    # For fibers with only A direction, their end event = span if healthy
-    for fnum, r in fibers_a.items():
-        a_end = _end_km(r)
-        if a_end:
-            span_estimates.append(a_end)
-    if fibers_b:
-        for fnum, r in fibers_b.items():
-            b_end = _end_km(r)
-            if b_end:
-                span_estimates.append(b_end)
 
-    span_km = span_km_from_events
     if span_estimates:
-        # The true span appears as the dominant cluster in span_estimates.
-        # Both intact fibers (dist_a alone) and broken fibers (dist_a + dist_b)
-        # should converge on the same value. Use the mode/peak.
+        # All estimates should cluster tightly at the true span
         estimates_arr = np.array(sorted(span_estimates))
-        # Filter to estimates within 20% of the median to remove outliers
         med = float(np.median(estimates_arr))
-        good = estimates_arr[(estimates_arr >= med * 0.85) & (estimates_arr <= med * 1.15)]
+        good = estimates_arr[(estimates_arr >= med * 0.90) & (estimates_arr <= med * 1.10)]
         if len(good) >= 1:
             span_km = round(float(np.median(good)), 2)
+    else:
+        # No B files — fall back to max A end event (best we can do)
+        span_km = span_km_from_events
 
     bar.progress(0.40, text=f"Pass 1: analyzing {n_fibers} fibers x {len(splices)} splices... (span {span_km} km)")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
