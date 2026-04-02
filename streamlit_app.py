@@ -759,14 +759,14 @@ else:
         <div class="tc-card" style="flex:1;">
             <div class="tc-card-title">Viewer Color Key</div>
             <div class="tc-legend">
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink — A+B Reburn</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red — Break</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange — Broke</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue — B-fill</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow — A-only</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold — A-only &#9888;</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender — B-only</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple — B-only &#9888;</span>
+                <span style="background:#FFC7CE;color:#333;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #e0a0b0;">F12 0.183 dB — A+B Reburn</span>
+                <span style="background:#FF4444;color:#fff;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;">F85 BREAK — A→B 22.14 km</span>
+                <span style="background:#FF8800;color:#fff;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;">F107 BROKE — A→B 31.40 km</span>
+                <span style="background:#BDD7EE;color:#1F4E79;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #90bcd8;">F22 0.091 dB — B-fill</span>
+                <span style="background:#FFF2CC;color:#7F6000;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #e0d080;">F44 0.062 dB — A-only</span>
+                <span style="background:#FFD700;color:#4B3000;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #c8a000;">F61 0.214 dB — A-only &#9888;</span>
+                <span style="background:#E8D5F5;color:#4B0082;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #c0a0e0;">F33 0.055 dB — B-only</span>
+                <span style="background:#C084FC;color:#1A0033;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;font-family:'Nunito',sans-serif;border:1px solid #9040d0;">F78 0.241 dB — B-only &#9888;</span>
             </div>
         </div>
     </div>
