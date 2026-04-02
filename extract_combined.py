@@ -129,20 +129,18 @@ def main():
     for i, sp in enumerate(splices_raw):
         splices.append({**sp, 'splice_num': i + 1, 'is_bend': False})
 
-    # Span — use top 10% of A-ends + median of B-ends, take the max.
-    # Broken A fibers end early so top-10% avoids them pulling span low.
-    # B-direction end events = full span distance, most reliable.
-    all_ends_a = sorted([e['dist_km'] for r in fibers_a.values()
-                         for e in r['events'] if e.get('is_end')])
-    all_ends_b = sorted([e['dist_km'] for r in fibers_b.values()
-                         for e in r.get('events', []) if e.get('is_end')])
+    # Span — max end event across all fibers (both directions).
+    # Broken fibers end at the break; healthy fibers end at true span.
+    # The maximum is always from a healthy fiber = true span distance.
+    all_ends_a = [e['dist_km'] for r in fibers_a.values()
+                  for e in r['events'] if e.get('is_end') and e['dist_km'] < 300]
+    all_ends_b = [e['dist_km'] for r in fibers_b.values()
+                  for e in r.get('events', []) if e.get('is_end') and e['dist_km'] < 300]
     candidates = []
     if all_ends_a:
-        top_a = all_ends_a[int(len(all_ends_a) * 0.90):]
-        candidates.append(float(np.median(top_a)))
+        candidates.append(max(all_ends_a))
     if all_ends_b:
-        top_b = all_ends_b[int(len(all_ends_b) * 0.50):]
-        candidates.append(float(np.median(top_b)))
+        candidates.append(max(all_ends_b))
     span_km = round(max(candidates), 2) if candidates else 0
     print(f"  {len(fibers_a)} fibers, {span_km:.1f} km span, {len(splices)} splice positions")
 

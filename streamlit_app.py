@@ -477,24 +477,23 @@ if run_button and has_a:
     splices = [{**sp, 'splice_num': i + 1, 'is_bend': False}
                for i, sp in enumerate(splices_raw)]
 
-    # Compute span_km from the top of A-direction end events (avoids broken fibers
-    # pulling the estimate low) and cross-check with B-direction end events.
-    # B-direction fibers launch from the far end and their end event = full span,
-    # so they give the most reliable span estimate when A fibers are broken.
-    all_ends_a = sorted([e['dist_km'] for r in fibers_a.values()
-                         for e in r['events'] if e.get('is_end')])
-    all_ends_b = sorted([e['dist_km'] for r in (fibers_b or {}).values()
-                         for e in r.get('events', []) if e.get('is_end')])
+    # Compute span_km from end events across all fibers.
+    # Broken fibers end at the break km (both A and B directions).
+    # Healthy fibers end at the true span. So the MAX end event across
+    # all fibers is always from a healthy fiber = the true span distance.
+    # Add a small sanity cap (300 km) to ignore corrupt SOR files.
+    all_ends_a = [e['dist_km'] for r in fibers_a.values()
+                  for e in r['events'] if e.get('is_end') and e['dist_km'] < 300]
+    all_ends_b = [e['dist_km'] for r in (fibers_b or {}).values()
+                  for e in r.get('events', []) if e.get('is_end') and e['dist_km'] < 300]
 
     candidates = []
     if all_ends_a:
-        # Top 10% of A-direction ends (only the longest, avoiding broken fibers)
-        top_a = all_ends_a[int(len(all_ends_a) * 0.90):]
-        candidates.append(float(np.median(top_a)))
+        candidates.append(max(all_ends_a))
     if all_ends_b:
-        # Top 50% of B-direction ends (B end event = full span distance)
-        top_b = all_ends_b[int(len(all_ends_b) * 0.50):]
-        candidates.append(float(np.median(top_b)))
+        # B end event is distance from B-launch; convert to A-frame: span = max(B ends)
+        # only if B ends are longer than A ends (means B sees past A breaks)
+        candidates.append(max(all_ends_b))
 
     span_km = round(max(candidates), 2) if candidates else 0
 
