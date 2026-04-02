@@ -504,32 +504,65 @@ function draw2D() {
     for (let f = rib.f_start; f <= rib.f_end; f++) fibers.push(f);
   } else return;
 
-  // Find ranges from ALL data (not just zoom window) for consistent dB scale
-  let globalMinDb = Infinity, globalMaxDb = -Infinity, globalMaxKm = 0;
-  for (const f of fibers) {
-    const t = data.fiber_traces?.[String(f)];
-    if (!t) continue;
-    for (const [km, db] of t) {
-      if (db < globalMinDb) globalMinDb = db;
-      if (db > globalMaxDb) globalMaxDb = db;
-      if (km > globalMaxKm) globalMaxKm = km;
+  // Pre-build composite traces now so dB range can use signal-only values
+  compositeData = {};
+  if (showBDir && data.fiber_traces_b) {
+    for (const f of fibers) {
+      const tA = data.fiber_traces?.[String(f)];
+      const tB = data.fiber_traces_b?.[String(f)];
+      const brk = data.breaks?.[String(f)];
+      if (tA || tB) compositeData[f] = buildCompositeTrace(f, tA, tB, brk);
     }
   }
-  if (globalMaxKm === 0) return;
+
+  // Find ranges from signal-only data (skip noise cliff for broken fibers)
+  let globalMinDb = Infinity, globalMaxDb = -Infinity, globalMaxKm = 0;
+  for (const f of fibers) {
+    const brk = data.breaks?.[String(f)];
+    if (showBDir && compositeData[f]) {
+      for (const pt of compositeData[f]) {
+        if (pt.avg < globalMinDb) globalMinDb = pt.avg;
+        if (pt.avg > globalMaxDb) globalMaxDb = pt.avg;
+        if (pt.km > globalMaxKm) globalMaxKm = pt.km;
+      }
+    } else {
+      const t = data.fiber_traces?.[String(f)];
+      if (!t) continue;
+      for (const [km, db] of t) {
+        if (brk && km > brk.km + 0.1) continue; // skip noise cliff
+        if (db < globalMinDb) globalMinDb = db;
+        if (db > globalMaxDb) globalMaxDb = db;
+        if (km > globalMaxKm) globalMaxKm = km;
+      }
+    }
+  }
+  if (globalMaxKm === 0) globalMaxKm = data.meta?.span_km || 75;
+  if (globalMinDb === Infinity) return;
 
   // Apply zoom range
   const viewKmStart = zoomKmStart ?? 0;
   const viewKmEnd = zoomKmEnd ?? globalMaxKm;
 
-  // Find dB range within zoom window
+  // Find dB range within zoom window (signal-only)
   let minDb = Infinity, maxDb = -Infinity;
   for (const f of fibers) {
-    const t = data.fiber_traces?.[String(f)];
-    if (!t) continue;
-    for (const [km, db] of t) {
-      if (km >= viewKmStart && km <= viewKmEnd) {
-        if (db < minDb) minDb = db;
-        if (db > maxDb) maxDb = db;
+    const brk = data.breaks?.[String(f)];
+    if (showBDir && compositeData[f]) {
+      for (const pt of compositeData[f]) {
+        if (pt.km >= viewKmStart && pt.km <= viewKmEnd) {
+          if (pt.avg < minDb) minDb = pt.avg;
+          if (pt.avg > maxDb) maxDb = pt.avg;
+        }
+      }
+    } else {
+      const t = data.fiber_traces?.[String(f)];
+      if (!t) continue;
+      for (const [km, db] of t) {
+        if (brk && km > brk.km + 0.1) continue; // skip noise cliff
+        if (km >= viewKmStart && km <= viewKmEnd) {
+          if (db < minDb) minDb = db;
+          if (db > maxDb) maxDb = db;
+        }
       }
     }
   }
@@ -564,7 +597,6 @@ function draw2D() {
 
   // Grey shades for A-only mode (also used in composite mode)
   const greys = ['#999','#888','#aaa','#777','#bbb','#666','#9a9a9a','#8a8a8a','#7a7a7a','#aaa','#6a6a6a','#b5b5b5'];
-  compositeData = {};
 
   if (showBDir && data.fiber_traces_b) {
     // ── A+B Composite mode ────────────────────────────────────────────────────
@@ -656,33 +688,41 @@ function draw2D() {
   }
 
   // ── Gainer/Loser markers at each splice ──────────────────────────────────
-  // For each fiber at each splice, find the dB step and draw:
-  //   Green triangle UP = gainer (apparent gain from mode-field mismatch)
-  //   Red/pink triangle DOWN = loser (real loss)
   for (const sp of data.splices) {
-    if (sp.is_bend) continue; // skip bend zones
+    if (sp.is_bend) continue;
     const sx = kmToX(sp.km);
-    if (sx < ML || sx > ML + cW) continue; // off screen
+    if (sx < ML || sx > ML + cW) continue;
 
     for (let fi = 0; fi < fibers.length; fi++) {
       const fnum = fibers[fi];
-      const trace = data.fiber_traces?.[String(fnum)];
-      if (!trace || trace.length < 4) continue;
-      if (data.breaks[String(fnum)]) continue; // skip broken fibers
+      const brk = data.breaks?.[String(fnum)];
 
-      // Measure the step at this splice from the high-res trace
-      // Use points 0.1-0.3 km before and after the splice (skip the dead zone)
+      // Skip splices that are in noise — past the break (A-only) or
+      // past the B coverage in composite mode
+      if (brk && !showBDir && sp.km > brk.km) continue;
+
       let beforeDb = null, afterDb = null;
       let bSum = 0, bCnt = 0, aSum = 0, aCnt = 0;
-      for (const [km, db] of trace) {
-        const dist = km - sp.km;
-        if (dist >= -0.3 && dist < -0.05) { bSum += db; bCnt++; }
-        if (dist > 0.05 && dist <= 0.3) { aSum += db; aCnt++; }
+
+      if (showBDir && compositeData[fnum]) {
+        // Use composite averaged trace for step measurement
+        const comp = compositeData[fnum];
+        for (const pt of comp) {
+          const dist = pt.km - sp.km;
+          if (dist >= -0.3 && dist < -0.05) { bSum += pt.avg; bCnt++; }
+          if (dist > 0.05 && dist <= 0.3)  { aSum += pt.avg; aCnt++; }
+        }
+      } else {
+        const trace = data.fiber_traces?.[String(fnum)];
+        if (!trace || trace.length < 4) continue;
+        for (const [km, db] of trace) {
+          if (brk && km > brk.km) break; // don't read into noise
+          const dist = km - sp.km;
+          if (dist >= -0.3 && dist < -0.05) { bSum += db; bCnt++; }
+          if (dist > 0.05 && dist <= 0.3)  { aSum += db; aCnt++; }
+        }
       }
-      if (bCnt >= 2 && aCnt >= 2) {
-        beforeDb = bSum / bCnt;
-        afterDb = aSum / aCnt;
-      }
+      if (bCnt >= 2 && aCnt >= 2) { beforeDb = bSum / bCnt; afterDb = aSum / aCnt; }
       if (beforeDb === null || afterDb === null) continue;
 
       const stepDb = beforeDb - afterDb; // positive = loss, negative = gain
@@ -727,17 +767,27 @@ function draw2D() {
 
       for (const entry of cell.entries) {
         const fnum = entry.fnum;
-        const trace = data.fiber_traces?.[String(fnum)];
-        if (!trace) continue;
+        const brk = data.breaks?.[String(fnum)];
 
-        // Find dB at this splice position — only if trace actually covers this km
+        // Find dB at this splice position from the appropriate source
         let nearestDb = null, nearestDist = Infinity;
-        for (const [km, db] of trace) {
-          const d = Math.abs(km - sp.km);
-          if (d < nearestDist) { nearestDist = d; nearestDb = db; }
+
+        if (showBDir && compositeData[fnum]) {
+          // Use composite trace — always has signal at splice positions
+          for (const pt of compositeData[fnum]) {
+            const d = Math.abs(pt.km - sp.km);
+            if (d < nearestDist) { nearestDist = d; nearestDb = pt.avg; }
+          }
+        } else {
+          const trace = data.fiber_traces?.[String(fnum)];
+          if (!trace) continue;
+          for (const [km, db] of trace) {
+            if (brk && km > brk.km + 0.1) break; // don't read into noise cliff
+            const d = Math.abs(km - sp.km);
+            if (d < nearestDist) { nearestDist = d; nearestDb = db; }
+          }
         }
-        // Skip if the nearest trace point is more than 0.5 km away
-        // (means the fiber's trace doesn't reach this splice)
+        // Skip if not covered or too far
         if (nearestDb === null || nearestDist > 0.5) continue;
 
         const y = dbToY(nearestDb);
