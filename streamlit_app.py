@@ -275,6 +275,14 @@ with st.sidebar:
 
     st.divider()
     st.markdown("## Settings")
+    col_sa, col_sb = st.columns(2)
+    with col_sa:
+        site_a_input = st.text_input("Site A (launch end)", value="", placeholder="e.g. TUL")
+    with col_sb:
+        site_b_input = st.text_input("Site B (far end)", value="", placeholder="e.g. BAR")
+    span_override = st.number_input("Span override (km, 0 = auto-detect)",
+                                    value=0.0, format="%.2f", step=0.5,
+                                    help="Enter the known cable span in km. Use 0 to let the app estimate it from the SOR files.")
     threshold   = st.number_input("Bidirectional threshold (dB, 0.15=auto)",
                                   value=REBURN_THRESHOLD, format="%.3f", step=0.01)
     ribbon_size = RIBBON_SIZE
@@ -477,66 +485,86 @@ if run_button and has_a:
     splices = [{**sp, 'splice_num': i + 1, 'is_bend': False}
                for i, sp in enumerate(splices_raw)]
 
-    # Compute span_km from end events across all fibers.
-    # Broken fibers end at the break km (both A and B directions).
-    # Healthy fibers end at the true span. So the MAX end event across
-    # all fibers is always from a healthy fiber = the true span distance.
-    # Add a small sanity cap (300 km) to ignore corrupt SOR files.
-    all_ends_a = [e['dist_km'] for r in fibers_a.values()
-                  for e in r['events'] if e.get('is_end') and e['dist_km'] < 300]
-    all_ends_b = [e['dist_km'] for r in (fibers_b or {}).values()
-                  for e in r.get('events', []) if e.get('is_end') and e['dist_km'] < 300]
-
-    candidates = []
-    if all_ends_a:
-        candidates.append(max(all_ends_a))
-    if all_ends_b:
-        # B end event is distance from B-launch; convert to A-frame: span = max(B ends)
-        # only if B ends are longer than A ends (means B sees past A breaks)
-        candidates.append(max(all_ends_b))
-
-    span_km_from_events = round(max(candidates), 2) if candidates else 0
-
-    # Compute true span from A+B end event composite.
-    # For any given fiber fnum, the A-direction end event is at dist_a km from A,
-    # and the B-direction end event is at dist_b km from B.
-    # If the fiber is intact:  dist_a == dist_b == span
-    # If the fiber is broken:  dist_a + dist_b == span  (both see the same break)
-    # So: span = dist_a + dist_b for broken fibers,  or = dist_a (or dist_b) for intact.
-    # We collect all estimates and take the median to be robust.
-    def _end_km(r):
-        for e in r.get('events', []):
-            if e.get('is_end') and e.get('dist_km', 0) > 0:
-                return float(e['dist_km'])
-        return None
-
-    span_estimates = []
-    if fibers_b:
-        common = set(fibers_a.keys()) & set(fibers_b.keys())
-        for fnum in common:
-            a_end = _end_km(fibers_a[fnum])
-            b_end = _end_km(fibers_b[fnum])
-            if not a_end or not b_end:
-                continue
-            # Healthy: dist_a ≈ dist_b ≈ span → use dist_a
-            # Broken:  dist_a + dist_b = span → use sum
-            if abs(a_end - b_end) / max(a_end, b_end) < 0.10:
-                span_estimates.append(a_end)
-            else:
-                span_estimates.append(a_end + b_end)
-
-    if span_estimates:
-        # All estimates should cluster tightly at the true span
-        estimates_arr = np.array(sorted(span_estimates))
-        med = float(np.median(estimates_arr))
-        good = estimates_arr[(estimates_arr >= med * 0.90) & (estimates_arr <= med * 1.10)]
-        if len(good) >= 1:
-            span_km = round(float(np.median(good)), 2)
+    # ── Span detection ────────────────────────────────────────────────────────
+    # User override wins — skip all heuristics
+    if span_override and span_override > 1.0:
+        # Manual override — user knows the span
+        span_km = round(float(span_override), 2)
+        span_debug = f"span={span_km} km (manual)"
     else:
-        # No B files — fall back to max A end event (best we can do)
-        span_km = span_km_from_events
+        # Auto-detect span from SOR event data
+        def _has_1e(r):
+            return any(e.get('is_end') and e.get('dist_km', 0) > 1.0
+                       for e in r.get('events', []))
 
-    bar.progress(0.40, text=f"Pass 1: analyzing {n_fibers} fibers x {len(splices)} splices... (span {span_km} km)")
+        def _end_1e_km(r):
+            for e in r.get('events', []):
+                if e.get('is_end') and e.get('dist_km', 0) > 1.0:
+                    return float(e['dist_km'])
+            return None
+
+        def _last_1f_km(r):
+            last = None
+            for e in r.get('events', []):
+                if e.get('is_reflective') and not e.get('is_end') and e.get('dist_km', 0) > 1.0:
+                    last = e
+            return float(last['dist_km']) if last else None
+
+        # Priority 1: EXFO proprietary SpansLength field (most authoritative).
+        # This is EXFO's own stored cable span, present in the proprietary block.
+        # It is stored in meters in the SOR file — convert to km.
+        exfo_spans = []
+        for r in list(fibers_a.values()) + list((fibers_b or {}).values()):
+            sl = r.get('exfo_spans_length')
+            if sl and 1000 < sl < 500000:   # plausible meter range (1–500 km)
+                exfo_spans.append(sl / 1000.0)
+        if exfo_spans:
+            arr = np.array(sorted(exfo_spans))
+            med = float(np.median(arr))
+            tight = arr[(arr >= med * 0.97) & (arr <= med * 1.03)]
+            if len(tight) >= 1:
+                span_km = round(float(np.median(tight)), 2)
+                span_debug = f"span={span_km} km (EXFO SpansLength, n={len(tight)})"
+        else:
+            span_km = 0
+            span_debug = "span=? (no EXFO SpansLength)"
+
+        # Priority 2: max 1E events (intact or range-limited fibers)
+        if span_km == 0:
+            all_1e_a = [e['dist_km'] for r in fibers_a.values()
+                        for e in r['events'] if e.get('is_end') and 1.0 < e['dist_km'] < 300]
+            all_1e_b = [e['dist_km'] for r in (fibers_b or {}).values()
+                        for e in r.get('events', []) if e.get('is_end') and 1.0 < e['dist_km'] < 300]
+            candidates = []
+            if all_1e_a: candidates.append(max(all_1e_a))
+            if all_1e_b: candidates.append(max(all_1e_b))
+            span_km = round(max(candidates), 2) if candidates else 0
+            span_debug = f"span={span_km} km (1E events)"
+
+        # Priority 3: broken-fiber pair sums (A_break + B_end ≈ span when B reaches break)
+        pair_sums = []
+        if fibers_b:
+            for fnum in set(fibers_a.keys()) & set(fibers_b.keys()):
+                ra = fibers_a[fnum]
+                rb = fibers_b[fnum]
+                if _has_1e(ra):
+                    continue
+                a_brk = _last_1f_km(ra)
+                if not a_brk or a_brk < 2.0:
+                    continue
+                b_end = _end_1e_km(rb) or _last_1f_km(rb)
+                if not b_end or b_end < 2.0:
+                    continue
+                pair_sums.append(a_brk + b_end)
+            if pair_sums:
+                arr = np.array(sorted(pair_sums))
+                p95 = round(float(np.percentile(arr, 95)), 2)
+                if p95 > span_km:
+                    span_km = p95
+                    _ps = f" | sums [{min(pair_sums):.1f}–{max(pair_sums):.1f}] n={len(pair_sums)}"
+                    span_debug = f"span={span_km} km (pair sums){_ps}"
+
+    bar.progress(0.40, text=f"Pass 1: {n_fibers} fibers x {len(splices)} splices | {span_debug}")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
     bar.progress(0.60, text="Pass 2: scanning B-direction for missed events...")
@@ -673,16 +701,74 @@ if run_button and has_a:
             if pts_b:
                 fiber_traces_b[str(fnum)] = pts_b
 
-    # Auto-detect site names
-    folder_name = os.path.basename(os.path.normpath(dir_a)).upper()
-    alpha = ''.join(c for c in folder_name if c.isalpha())
-    if len(alpha) == 6:
-        site_a, site_b = alpha[:3], alpha[3:]
-    elif len(alpha) in (7, 8):
-        mid = len(alpha) // 2
-        site_a, site_b = alpha[:mid], alpha[mid:]
+    # Site names: prefer sidebar inputs; fall back to auto-detect from folder name
+    _sa = site_a_input.strip().upper()
+    _sb = site_b_input.strip().upper()
+    if _sa and _sb:
+        site_a, site_b = _sa, _sb
     else:
-        site_a, site_b = 'A', 'B'
+        folder_name = os.path.basename(os.path.normpath(dir_a)).upper()
+        alpha = ''.join(c for c in folder_name if c.isalpha())
+        if len(alpha) == 6:
+            site_a, site_b = alpha[:3], alpha[3:]
+        elif len(alpha) in (7, 8):
+            mid = len(alpha) // 2
+            site_a, site_b = alpha[:mid], alpha[mid:]
+        else:
+            site_a = _sa if _sa else 'A'
+            site_b = _sb if _sb else 'B'
+
+    # ── Per-fiber event lists for dark-zone extrapolation ────────────────────
+    # For each fiber: all non-trivial events from A direction (at their A-frame km)
+    # plus all non-trivial events from B direction (converted to A-frame).
+    # The JS composite builder uses these to draw the Rayleigh slope + splice steps
+    # across any gap between A's trace end and B's trace start.
+    bar.progress(0.88, text="Building fiber event lists...")
+    fiber_events = {}
+    for fnum in sorted(fibers_a.keys()):
+        ra = fibers_a[fnum]
+        rb = fibers_b.get(fnum) if fibers_b else None
+        evts = []
+
+        # A-direction events (skip launch at 0 km and end events)
+        for e in ra.get('events', []):
+            if e.get('is_end') or e.get('dist_km', 0) < 0.5:
+                continue
+            loss = abs(e.get('splice_loss', 0))
+            if loss > 0.005:
+                evts.append([round(float(e['dist_km']), 3), round(loss, 4)])
+
+        # B-direction events converted to A-frame
+        if rb:
+            b_end_evt = next((e for e in rb.get('events', []) if e.get('is_end')), None)
+            b_span = float(b_end_evt['dist_km']) if b_end_evt else None
+            if b_span is None:
+                # fallback: last reflective event
+                b_refs = [e for e in rb.get('events', [])
+                          if e.get('is_reflective') and not e.get('is_end') and e.get('dist_km', 0) > 1.0]
+                b_span = float(b_refs[-1]['dist_km']) if b_refs else None
+            if b_span:
+                for e in rb.get('events', []):
+                    if e.get('is_end') or e.get('dist_km', 0) < 0.5:
+                        continue
+                    km_a = round(span_km - e['dist_km'], 3)
+                    if km_a < 0.5 or km_a > span_km:
+                        continue
+                    loss = abs(e.get('splice_loss', 0))
+                    if loss > 0.005:
+                        evts.append([km_a, round(loss, 4)])
+
+        # Sort by km; deduplicate: within 0.3 km keep highest loss
+        evts.sort(key=lambda x: x[0])
+        deduped = []
+        for ev in evts:
+            if deduped and abs(ev[0] - deduped[-1][0]) < 0.3:
+                if ev[1] > deduped[-1][1]:
+                    deduped[-1] = ev
+            else:
+                deduped.append(ev)
+        if deduped:
+            fiber_events[str(fnum)] = deduped
 
     combined_data = {
         'meta': {
@@ -699,13 +785,16 @@ if run_button and has_a:
         'fiber_profiles': fiber_profiles,
         'fiber_traces': fiber_traces,
         'fiber_traces_b': fiber_traces_b,
+        'fiber_events': fiber_events,
     }
 
     bar.progress(0.95, text="Building viewer...")
     st.session_state.viewer_html = build_viewer_html(combined_data)
     st.session_state.done = True
-    bar.progress(1.0, text="Done!")
-    bar.empty()
+    bar.progress(1.0, text="Viewer ready — loading interface...")
+    # Do NOT call bar.empty() here — keep the bar visible.
+    # The rerun triggered by session_state change will show the viewer.
+    # The bar is replaced naturally when the display section renders.
   except Exception as _e:
     import traceback
     st.error(f"Error generating viewer: {_e}")
@@ -732,6 +821,9 @@ if st.session_state.get("done") and st.session_state.viewer_html:
     </style>
     """, unsafe_allow_html=True)
 
+    # Show a loading bar while the iframe paints
+    load_bar = st.progress(1.0, text="Viewer loading — please wait...")
+
     # Return button left-aligned, then full-width orange line
     col_btn, _ = st.columns([1, 5])
     with col_btn:
@@ -744,6 +836,7 @@ if st.session_state.get("done") and st.session_state.viewer_html:
     """, unsafe_allow_html=True)
 
     components.html(st.session_state.viewer_html, height=860, scrolling=False)
+    load_bar.empty()   # clear bar once iframe content has been sent to browser
 
 else:
     st.markdown("""
