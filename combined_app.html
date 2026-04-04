@@ -294,15 +294,8 @@ function drawFiberHighlight(fnum, color) {
 let damageDots = [];  // [{x, y, r, text, color}] for hover detection
 
 function getKmRange() {
-  if (!data) return 75;
-  let maxKm = 0;
-  const fibers = currentFiber > 0 ? [currentFiber] :
-    currentRibbon >= 0 ? Array.from({length: data.meta.ribbon_size}, (_, i) => data.ribbons[currentRibbon].f_start + i) : [];
-  for (const f of fibers) {
-    const t = data.fiber_traces?.[String(f)];
-    if (t) { const last = t[t.length-1][0]; if (last > maxKm) maxKm = last; }
-  }
-  return maxKm || data.meta.span_km;
+  // Always use the full cable span — not the A-trace end which stops at the break.
+  return (data && data.meta && data.meta.span_km) || 75;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -763,7 +756,7 @@ function draw2D() {
     }
   }
   // Always use span_km as the km extent so all splices are visible
-  globalMaxKm = data.meta?.span_km || globalMaxKm || 75;
+  globalMaxKm = data.meta?.span_km || 75;  // always full cable span
   if (globalMinDb === Infinity) return;
 
   // Apply zoom range
