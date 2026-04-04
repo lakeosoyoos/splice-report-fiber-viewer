@@ -564,6 +564,14 @@ if run_button and has_a:
                     _ps = f" | sums [{min(pair_sums):.1f}–{max(pair_sums):.1f}] n={len(pair_sums)}"
                     span_debug = f"span={span_km} km (pair sums){_ps}"
 
+    # Final floor: the last splice position is always within the cable span.
+    # If all heuristics under-estimated, bump span to at least last splice + 0.5 km.
+    if splices:
+        last_splice_km = max(sp['position_km'] for sp in splices)
+        if last_splice_km + 0.5 > span_km:
+            span_km = round(last_splice_km + 0.5, 2)
+            span_debug += f" → floored to last splice {last_splice_km:.2f}+0.5"
+
     bar.progress(0.40, text=f"Pass 1: {n_fibers} fibers x {len(splices)} splices | {span_debug}")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
