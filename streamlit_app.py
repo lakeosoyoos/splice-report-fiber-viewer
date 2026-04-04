@@ -638,14 +638,28 @@ if run_button and has_a:
             trace_b, dist_b, dx_km_b, noise_km_b = fiber_dist_array(rb)
             if trace_b is None:
                 continue
-            end_idx_b = min(int((noise_km_b - dist_b[0]) / dx_km_b), len(trace_b))
+
+            # Clip B trace to its SIGNAL region only — stop at the first
+            # significant reflective event (break from B's side) so we never
+            # include B's noise floor in the trace.  For a broken fiber this
+            # is the cut reflection; for a healthy fiber it's the far connector.
+            b_signal_end_km = noise_km_b   # default: end event or full trace
+            for e in rb.get('events', []):
+                if e.get('is_reflective') and e.get('dist_km', 0) > 1.0:
+                    b_signal_end_km = float(e['dist_km'])
+                    break   # first reflective past launch = break or far end
+            # Take the min so we never go past the true end
+            b_signal_end_km = min(b_signal_end_km, noise_km_b)
+
+            end_idx_b = min(int((b_signal_end_km - dist_b[0]) / dx_km_b), len(trace_b))
+            end_idx_b = max(end_idx_b, 10)   # at least some points
             step_b = max(1, end_idx_b // target_pts)
             pts_b = []
             for i in range(0, end_idx_b - step_b, step_b):
                 km_b = float(np.mean(dist_b[i:i + step_b]))
                 db   = float(np.mean(trace_b[i:i + step_b]))
                 pts_b.append([round(span_km - km_b, 3), round(db, 3)])
-            pts_b.sort(key=lambda p: p[0])   # sort by A-frame km
+            pts_b.sort(key=lambda p: p[0])   # sort ascending by A-frame km
             if pts_b:
                 fiber_traces_b[str(fnum)] = pts_b
 
