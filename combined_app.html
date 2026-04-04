@@ -53,10 +53,19 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 #restore-btn:hover { background: #c23610; }
-#top-panel { flex: 1; min-height: 0; position: relative; }
-#bot-panel { display: none; }
+#top-panel { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+#bot-panel { height: 220px; min-height: 120px; border-top: 2px solid #E8461E; overflow: hidden; display: flex; flex-direction: column; }
 #trace-canvas { width: 100%; height: 100%; }
 #topo-3d { width: 100%; height: 100%; }
+#evt-panel { flex: 1; overflow-y: auto; background: #1a2224; padding: 4px 6px; }
+#evt-panel table { width: 100%; border-collapse: collapse; font-size: 10px; font-family: monospace; }
+#evt-panel th { background: #1F4E79; color: #fff; padding: 3px 6px; text-align: left; position: sticky; top: 0; font-size: 9px; white-space: nowrap; }
+#evt-panel td { padding: 2px 6px; border-bottom: 1px solid #2a3a3a; color: #e0e0e0; white-space: nowrap; }
+#evt-panel tr:hover td { background: #2a3a4a; }
+#evt-panel .evt-end   { color: #82d982; }
+#evt-panel .evt-brk   { color: #ff6b6b; font-weight: bold; }
+#evt-panel .evt-refl  { color: #ffa94d; }
+#evt-panel .evt-hdr   { background: #1C3050; color: #cce4ff; font-size: 9px; padding: 2px 6px; font-weight: bold; }
 
 #controls {
   position: absolute; top: 4px; right: 4px; background: rgba(255,255,255,0.92); border: 1px solid #ccc;
@@ -115,7 +124,10 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     </div>
   </div>
   <div id="bot-panel">
-    <div id="topo-3d"></div>
+    <div id="evt-panel"><table><thead><tr>
+      <th>#</th><th>km (A-frame)</th><th>ft</th><th>Type</th><th>Splice Loss (dB)</th><th>Refl (dB)</th><th>Slope (dB/km)</th>
+    </tr></thead><tbody id="evt-body"><tr><td colspan="7" style="color:#666;text-align:center;padding:20px">Select a fiber or ribbon to see events</td></tr></tbody></table></div>
+    <div id="topo-3d" style="display:none"></div>
     <div id="topo-tooltip"></div>
   </div>
 </div>
@@ -661,6 +673,42 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   return result;
 }
 
+function updateEvtTable() {
+  const tbody = document.getElementById('evt-body');
+  if (!tbody) return;
+  const fibers = currentFiber > 0 ? [currentFiber]
+    : currentRibbon >= 0 ? Array.from({length: data.ribbons[currentRibbon].f_end - data.ribbons[currentRibbon].f_start + 1},
+        (_, i) => data.ribbons[currentRibbon].f_start + i)
+    : [];
+  if (!fibers.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;text-align:center;padding:12px">Select a fiber or ribbon</td></tr>';
+    return;
+  }
+  const rows = [];
+  for (const fnum of fibers) {
+    const ra = data._raw_events_a && data._raw_events_a[String(fnum)];
+    const evts = data.fiber_events && data.fiber_events[String(fnum)];
+    const brk  = data.breaks && data.breaks[String(fnum)];
+    const spanKm = data.meta.span_km;
+    // Use fiber_events which already has both A and B events in A-frame
+    if (!evts || evts.length === 0) continue;
+    if (fibers.length > 1) {
+      rows.push(`<tr><td colspan="7" class="evt-hdr">F${fnum}${brk ? ` ⚠ BREAK @ ${brk.km.toFixed(3)} km` : ''}</td></tr>`);
+    }
+    for (const [km, loss] of evts) {
+      const ft = Math.round(km * 3280.84).toLocaleString();
+      const isBrk = brk && Math.abs(km - brk.km) < 0.5;
+      const isEnd = Math.abs(km - spanKm) < 1.0;
+      const cls = isBrk ? 'evt-brk' : isEnd ? 'evt-end' : '';
+      const type = isBrk ? '1F BREAK' : isEnd ? '1E END' : '0F Splice';
+      rows.push(`<tr class="${cls}"><td>${fnum}</td><td>${km.toFixed(3)}</td><td>${ft}</td><td>${type}</td><td>${loss > 0 ? loss.toFixed(4) : '—'}</td><td>—</td><td>—</td></tr>`);
+    }
+  }
+  tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="7" style="color:#666;text-align:center;padding:12px">No events found</td></tr>';
+  document.getElementById('bot-panel').style.display = 'flex';
+  document.getElementById('bot-panel').style.flexDirection = 'column';
+}
+
 function draw2D() {
   const panel = document.getElementById('top-panel');
   const canvas = document.getElementById('trace-canvas');
@@ -1049,6 +1097,9 @@ function draw2D() {
 
   // Push state to popup so it redraws with the same selection
   syncPopup();
+
+  // Update key events table in bottom panel
+  updateEvtTable();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
