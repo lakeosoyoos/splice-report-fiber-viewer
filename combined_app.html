@@ -494,10 +494,19 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   // darkZone = true means B doesn't reach the break — gap from brk.km to bLeftKm
 
   let bStitchKm;
+  // ── Stitch km: where B is anchored onto the A-frame dB axis ─────────────────
+  // KEY INSIGHT: B's cleanest signal is at bRightKm (B's launch, far right in A-frame).
+  // B's noisiest signal is at bLeftKm (the break from B's side — Fresnel reflection).
+  // So for dark-zone broken fibers, we ALWAYS stitch at B's RIGHT end (clean launch),
+  // not B's left end (noisy break). The dark zone extrapolation gives us the expected
+  // A-frame dB level at bRightKm using A's slope + cumulative event losses.
   if (brk && !darkZone) {
-    bStitchKm = brk.km;           // B reaches the break — stitch there
+    bStitchKm = brk.km;           // B reaches the break directly — stitch there
   } else if (brk && darkZone) {
-    bStitchKm = bLeftKm;          // B starts past the break — stitch at B's first point
+    // Stitch at B's RIGHT end (B's clean launch side, near span_km)
+    // Use 5% in from right to avoid any launch connector artifact
+    const inset = Math.max(1, Math.floor(traceB.length * 0.05));
+    bStitchKm = traceB[traceB.length - 1 - inset][0];
   } else if (traceB && traceB.length >= 4) {
     const inset = Math.max(1, Math.floor(traceB.length * 0.10));
     bStitchKm = traceB[inset][0]; // Healthy: 10% in from B's left edge
@@ -505,51 +514,13 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     bStitchKm = bLeftKm;
   }
 
-  // ── Expected dB at bStitchKm (used to normalise B onto composite dB axis) ───
-  let db_at_stitch = null;
-  if (bStitchKm !== null) {
-    if (brk && !darkZone) {
-      // B meets A at the break — use A's last real sample
-      if (traceA) {
-        for (let i = traceA.length - 1; i >= 0; i--) {
-          if (traceA[i][0] <= brk.km) { db_at_stitch = traceA[i][1]; break; }
-        }
-      }
-    } else if (brk && darkZone) {
-      // Dark zone: B starts past break — extrapolate A's slope across the gap
-      let db_at_brk = null;
-      if (traceA) {
-        for (let i = traceA.length - 1; i >= 0; i--) {
-          if (traceA[i][0] <= brk.km) { db_at_brk = traceA[i][1]; break; }
-        }
-      }
-      if (db_at_brk !== null) {
-        db_at_stitch = db_at_brk + aSlope * (bStitchKm - brk.km);
-      }
-    } else if (aEndKm !== null) {
-      if (bStitchKm <= aEndKm) {
-        db_at_stitch = interp(traceA, bStitchKm);
-      } else {
-        db_at_stitch = aEndDb + aSlope * (bStitchKm - aEndKm);
-      }
-    } else if (traceA && traceA.length > 0) {
-      db_at_stitch = traceA[traceA.length-1][1];
-    }
-  }
-
-  // B offset: db_B_display(km) = bOffset − db_b_raw(km)
-  let bOffset = null;
-  if (traceB && traceB.length >= 2 && bStitchKm !== null && db_at_stitch !== null) {
-    const db_B_stitch = interp(traceB, bStitchKm);
-    if (db_B_stitch !== null) bOffset = db_at_stitch + db_B_stitch;
-  }
-
   // ── Dark zone extrapolation using event table ─────────────────────────────
   // Build a piecewise trace for the dark zone: Rayleigh slope + step at each
   // known splice event.  Uses fiber_events[fnum] which contains ALL events from
   // both A and B directions (B converted to A-frame) with their splice losses.
+  // We build this FIRST so we can use it to compute db_at_stitch at bStitchKm.
   const darkZoneStart = brk ? brk.km : aEndKm;  // where A real trace ends
-  const darkZoneEnd   = bStitchKm;               // where B real trace begins
+  const darkZoneEnd   = bStitchKm;               // where we anchor B
   const hasDarkZone   = darkZone || (!brk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
 
   // Per-fiber events in the dark zone range
@@ -588,6 +559,40 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
         darkTrace.push({ km: Math.round(km * 1000) / 1000, db: curDb });
       }
     }
+  }
+
+  // ── Expected dB at bStitchKm — computed from dark trace or A trace ──────────
+  let db_at_stitch = null;
+  if (bStitchKm !== null) {
+    if (brk && !darkZone) {
+      // B meets A at the break — use A's last real sample
+      if (traceA) {
+        for (let i = traceA.length - 1; i >= 0; i--) {
+          if (traceA[i][0] <= brk.km) { db_at_stitch = traceA[i][1]; break; }
+        }
+      }
+    } else if (hasDarkZone && darkTrace.length > 0) {
+      // Use the dark zone extrapolation endpoint — most accurate for dark-zone fibers
+      // The dark trace was built from A's last real point + cumulative event losses
+      db_at_stitch = darkTrace[darkTrace.length - 1].db;
+    } else if (aEndKm !== null) {
+      if (bStitchKm <= aEndKm) {
+        db_at_stitch = interp(traceA, bStitchKm);
+      } else {
+        db_at_stitch = aEndDb + aSlope * (bStitchKm - aEndKm);
+      }
+    } else if (traceA && traceA.length > 0) {
+      db_at_stitch = traceA[traceA.length-1][1];
+    }
+  }
+
+  // B offset: db_B_display(km) = bOffset − db_b_raw(km)
+  // Anchored at bStitchKm (B's clean launch end) so the formula gives the
+  // right cumulative loss level everywhere across B's range.
+  let bOffset = null;
+  if (traceB && traceB.length >= 2 && bStitchKm !== null && db_at_stitch !== null) {
+    const db_B_stitch = interp(traceB, bStitchKm);
+    if (db_B_stitch !== null) bOffset = db_at_stitch + db_B_stitch;
   }
 
   // ── Build km point set ──────────────────────────────────────────────────────
@@ -1670,27 +1675,13 @@ function draw2D() {
     var pdarkZone = pbrk && bLeftKm !== null && bLeftKm > pbrk.km + 1.0;
     var bStitchKm;
     if (pbrk && !pdarkZone) { bStitchKm = pbrk.km; }
-    else if (pbrk && pdarkZone) { bStitchKm = bLeftKm; }
+    else if (pbrk && pdarkZone) {
+      // Stitch at B's clean RIGHT end (B's launch side), not the noisy break end
+      var pinset = Math.max(1, Math.floor(ptraceB.length * 0.05));
+      bStitchKm = ptraceB[ptraceB.length - 1 - pinset][0];
+    }
     else if (ptraceB && ptraceB.length >= 4) { var inset=Math.max(1,Math.floor(ptraceB.length*0.10)); bStitchKm=ptraceB[inset][0]; }
     else { bStitchKm = bLeftKm; }
-    var db_at_stitch = null;
-    if (bStitchKm !== null) {
-      if (pbrk && !pdarkZone) {
-        if (ptraceA) { for (var i = ptraceA.length-1; i >= 0; i--) { if (ptraceA[i][0] <= pbrk.km) { db_at_stitch = ptraceA[i][1]; break; } } }
-      } else if (pbrk && pdarkZone) {
-        var db_at_brk = null;
-        if (ptraceA) { for (var i = ptraceA.length-1; i >= 0; i--) { if (ptraceA[i][0] <= pbrk.km) { db_at_brk = ptraceA[i][1]; break; } } }
-        if (db_at_brk !== null) db_at_stitch = db_at_brk + aSlope * (bStitchKm - pbrk.km);
-      } else if (aEndKm !== null) {
-        if (bStitchKm <= aEndKm) { db_at_stitch = pInterp(ptraceA, bStitchKm); }
-        else                     { db_at_stitch = aEndDb + aSlope * (bStitchKm - aEndKm); }
-      } else if (ptraceA && ptraceA.length > 0) { db_at_stitch = ptraceA[ptraceA.length-1][1]; }
-    }
-    var pbOffset = null;
-    if (ptraceB && ptraceB.length >= 2 && bStitchKm !== null && db_at_stitch !== null) {
-      var db_B_stitch = pInterp(ptraceB, bStitchKm);
-      if (db_B_stitch !== null) pbOffset = db_at_stitch + db_B_stitch;
-    }
     // Dark zone event-table extrapolation (same logic as main buildCompositeTrace)
     var pDarkZoneStart = pbrk ? pbrk.km : aEndKm;
     var pDarkZoneEnd   = bStitchKm;
@@ -1725,6 +1716,22 @@ function draw2D() {
       }
     }
 
+    var db_at_stitch = null;
+    if (bStitchKm !== null) {
+      if (pbrk && !pdarkZone) {
+        if (ptraceA) { for (var i = ptraceA.length-1; i >= 0; i--) { if (ptraceA[i][0] <= pbrk.km) { db_at_stitch = ptraceA[i][1]; break; } } }
+      } else if (pHasDarkZone && pDarkTrace.length > 0) {
+        db_at_stitch = pDarkTrace[pDarkTrace.length-1][1];
+      } else if (aEndKm !== null) {
+        if (bStitchKm <= aEndKm) { db_at_stitch = pInterp(ptraceA, bStitchKm); }
+        else                     { db_at_stitch = aEndDb + aSlope * (bStitchKm - aEndKm); }
+      } else if (ptraceA && ptraceA.length > 0) { db_at_stitch = ptraceA[ptraceA.length-1][1]; }
+    }
+    var pbOffset = null;
+    if (ptraceB && ptraceB.length >= 2 && bStitchKm !== null && db_at_stitch !== null) {
+      var db_B_stitch = pInterp(ptraceB, bStitchKm);
+      if (db_B_stitch !== null) pbOffset = db_at_stitch + db_B_stitch;
+    }
     var aLimit = pbrk ? pbrk.km : (aEndKm !== null ? aEndKm : Infinity);
     var kmSet = {};
     if (ptraceA) ptraceA.forEach(function(p) { if (p[0] <= aLimit) kmSet[p[0]] = 1; });
