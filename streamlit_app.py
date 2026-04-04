@@ -486,91 +486,31 @@ if run_button and has_a:
                for i, sp in enumerate(splices_raw)]
 
     # ── Span detection ────────────────────────────────────────────────────────
-    # User override wins — skip all heuristics
-    if span_override and span_override > 1.0:
-        # Manual override — user knows the span
-        span_km = round(float(span_override), 2)
-        span_debug = f"span={span_km} km (manual)"
-    else:
-        # Auto-detect span from SOR event data
-        def _has_1e(r):
-            return any(e.get('is_end') and e.get('dist_km', 0) > 1.0
-                       for e in r.get('events', []))
+    # The splice positions from discover_splices are derived from OTDR event tables
+    # and are always accurate. The last splice km is a guaranteed lower bound on span.
+    # Start there and only upgrade — never downgrade.
 
-        def _end_1e_km(r):
-            for e in r.get('events', []):
-                if e.get('is_end') and e.get('dist_km', 0) > 1.0:
-                    return float(e['dist_km'])
-            return None
-
-        def _last_1f_km(r):
-            last = None
-            for e in r.get('events', []):
-                if e.get('is_reflective') and not e.get('is_end') and e.get('dist_km', 0) > 1.0:
-                    last = e
-            return float(last['dist_km']) if last else None
-
-        # Priority 1: EXFO proprietary SpansLength field (most authoritative).
-        # This is EXFO's own stored cable span, present in the proprietary block.
-        # It is stored in meters in the SOR file — convert to km.
-        exfo_spans = []
-        for r in list(fibers_a.values()) + list((fibers_b or {}).values()):
-            sl = r.get('exfo_spans_length')
-            if sl and 1000 < sl < 500000:   # plausible meter range (1–500 km)
-                exfo_spans.append(sl / 1000.0)
-        if exfo_spans:
-            arr = np.array(sorted(exfo_spans))
-            med = float(np.median(arr))
-            tight = arr[(arr >= med * 0.97) & (arr <= med * 1.03)]
-            if len(tight) >= 1:
-                span_km = round(float(np.median(tight)), 2)
-                span_debug = f"span={span_km} km (EXFO SpansLength, n={len(tight)})"
-        else:
-            span_km = 0
-            span_debug = "span=? (no EXFO SpansLength)"
-
-        # Priority 2: max 1E events (intact or range-limited fibers)
-        if span_km == 0:
-            all_1e_a = [e['dist_km'] for r in fibers_a.values()
-                        for e in r['events'] if e.get('is_end') and 1.0 < e['dist_km'] < 300]
-            all_1e_b = [e['dist_km'] for r in (fibers_b or {}).values()
-                        for e in r.get('events', []) if e.get('is_end') and 1.0 < e['dist_km'] < 300]
-            candidates = []
-            if all_1e_a: candidates.append(max(all_1e_a))
-            if all_1e_b: candidates.append(max(all_1e_b))
-            span_km = round(max(candidates), 2) if candidates else 0
-            span_debug = f"span={span_km} km (1E events)"
-
-        # Priority 3: broken-fiber pair sums (A_break + B_end ≈ span when B reaches break)
-        pair_sums = []
-        if fibers_b:
-            for fnum in set(fibers_a.keys()) & set(fibers_b.keys()):
-                ra = fibers_a[fnum]
-                rb = fibers_b[fnum]
-                if _has_1e(ra):
-                    continue
-                a_brk = _last_1f_km(ra)
-                if not a_brk or a_brk < 2.0:
-                    continue
-                b_end = _end_1e_km(rb) or _last_1f_km(rb)
-                if not b_end or b_end < 2.0:
-                    continue
-                pair_sums.append(a_brk + b_end)
-            if pair_sums:
-                arr = np.array(sorted(pair_sums))
-                p95 = round(float(np.percentile(arr, 95)), 2)
-                if p95 > span_km:
-                    span_km = p95
-                    _ps = f" | sums [{min(pair_sums):.1f}–{max(pair_sums):.1f}] n={len(pair_sums)}"
-                    span_debug = f"span={span_km} km (pair sums){_ps}"
-
-    # Final floor: the last splice position is always within the cable span.
-    # If all heuristics under-estimated, bump span to at least last splice + 0.5 km.
     if splices:
         last_splice_km = max(sp['position_km'] for sp in splices)
-        if last_splice_km + 0.5 > span_km:
-            span_km = round(last_splice_km + 0.5, 2)
-            span_debug += f" → floored to last splice {last_splice_km:.2f}+0.5"
+        span_km = round(last_splice_km + 1.0, 2)   # at minimum, span = last splice + 1 km
+        span_debug = f"span={span_km} km (last splice {last_splice_km:.3f}+1)"
+    else:
+        span_km = 0
+        span_debug = "span=0 (no splices found)"
+
+    if span_override and span_override > 1.0:
+        span_km = round(float(span_override), 2)
+        span_debug = f"span={span_km} km (manual override)"
+
+    # Upgrade only: check 1E end events from both directions
+    all_1e_a = [e['dist_km'] for r in fibers_a.values()
+                for e in r['events'] if e.get('is_end') and 1.0 < e['dist_km'] < 300]
+    all_1e_b = [e['dist_km'] for r in (fibers_b or {}).values()
+                for e in r.get('events', []) if e.get('is_end') and 1.0 < e['dist_km'] < 300]
+    for v in ([max(all_1e_a)] if all_1e_a else []) + ([max(all_1e_b)] if all_1e_b else []):
+        if v > span_km:
+            span_km = round(v, 2)
+            span_debug += f" → upgraded by 1E event to {span_km}"
 
     bar.progress(0.40, text=f"Pass 1: {n_fibers} fibers x {len(splices)} splices | {span_debug}")
     results = analyze_all(fibers_a, fibers_b, splices, threshold)
