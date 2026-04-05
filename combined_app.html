@@ -490,21 +490,16 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   //   BROKEN + dark zone (B starts past break): bStitchKm = bLeftKm (extrapolate from break)
   //   HEALTHY with gap: bStitchKm = 10% into B's range (cleaner signal)
 
-  const darkZone = brk && bLeftKm !== null && bLeftKm > brk.km + 1.0;
-  // darkZone = true means B doesn't reach the break — gap from brk.km to bLeftKm
-
-  let bStitchKm;
   // ── Stitch km: where B is anchored onto the A-frame dB axis ─────────────────
-  // KEY INSIGHT: B's cleanest signal is at bRightKm (B's launch, far right in A-frame).
-  // B's noisiest signal is at bLeftKm (the break from B's side — Fresnel reflection).
-  // So for dark-zone broken fibers, we ALWAYS stitch at B's RIGHT end (clean launch),
-  // not B's left end (noisy break). The dark zone extrapolation gives us the expected
-  // A-frame dB level at bRightKm using A's slope + cumulative event losses.
-  if (brk && !darkZone) {
-    bStitchKm = brk.km;           // B reaches the break directly — stitch there
-  } else if (brk && darkZone) {
-    // Stitch at B's RIGHT end (B's clean launch side, near span_km)
-    // Use 5% in from right to avoid any launch connector artifact
+  // KEY INSIGHT: For any broken fiber, B's cleanest signal is at bRightKm (B's
+  // launch end, far right in A-frame).  B's noisiest point is at bLeftKm (the
+  // break Fresnel reflection).  We ALWAYS stitch at B's RIGHT end for broken
+  // fibers so bOffset is computed from clean signal, not the Fresnel spike.
+  // The dark trace extrapolates from A's break all the way to bStitchKm so we
+  // can compute the expected dB level there.
+  let bStitchKm;
+  if (brk && traceB && traceB.length >= 2) {
+    // Always stitch at B's clean launch end for broken fibers
     const inset = Math.max(1, Math.floor(traceB.length * 0.05));
     bStitchKm = traceB[traceB.length - 1 - inset][0];
   } else if (traceB && traceB.length >= 4) {
@@ -515,65 +510,56 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   }
 
   // ── Dark zone extrapolation using event table ─────────────────────────────
-  // Build a piecewise trace for the dark zone: Rayleigh slope + step at each
-  // known splice event.  Uses fiber_events[fnum] which contains ALL events from
-  // both A and B directions (B converted to A-frame) with their splice losses.
-  // We build this FIRST so we can use it to compute db_at_stitch at bStitchKm.
-  const darkZoneStart = brk ? brk.km : aEndKm;  // where A real trace ends
-  const darkZoneEnd   = bLeftKm;                 // where B's signal actually starts (not bStitchKm which is B's far clean end)
-  const hasDarkZone   = darkZone || (!brk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
+  // darkZoneStart: where A's real trace ends (the break)
+  // darkBuildEnd:  where the dark trace is extrapolated TO for db_at_stitch
+  //                (= bStitchKm, near B's clean launch, so bOffset avoids Fresnel)
+  // darkZoneEnd:   visual display boundary — only show extrapolation where B has
+  //                no signal (= bLeftKm, B's far end in A-frame)
+  const darkZoneStart = brk ? brk.km : aEndKm;
+  const darkZoneEnd   = bLeftKm;    // visual: stop showing extrapolation where B starts
+  const darkBuildEnd  = bStitchKm;  // build: extrapolate all the way to stitch point
+  const hasDarkZone   = !!brk || (!brk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
 
-  // Per-fiber events in the dark zone range
+  // Per-fiber events from break through to stitch point
   const fiberEvts = (data.fiber_events && data.fiber_events[String(fnum)]) || [];
-  const darkEvts  = hasDarkZone && darkZoneStart !== null && darkZoneEnd !== null
-    ? fiberEvts.filter(e => e[0] > darkZoneStart + 0.1 && e[0] < darkZoneEnd - 0.1)
+  const darkEvts  = hasDarkZone && darkZoneStart !== null && darkBuildEnd !== null
+    ? fiberEvts.filter(e => e[0] > darkZoneStart + 0.1 && e[0] < darkBuildEnd - 0.1)
     : [];
 
-  // Build event-extrapolated trace through the dark zone.
-  // Each segment is: slope from previous point → event km, then step down by splice loss.
-  const darkTrace = [];   // [{km, db}] covering darkZoneStart → darkZoneEnd
-  if (hasDarkZone && darkZoneStart !== null && darkZoneEnd !== null) {
-    let curDb = (brk && aEndDb !== null) ? aEndDb
-              : (aEndDb !== null) ? aEndDb : null;
+  // Build event-extrapolated trace from darkZoneStart → darkBuildEnd.
+  // The last point gives db_at_stitch at bStitchKm (B's clean end).
+  // Display logic (km <= darkZoneEnd) will suppress it where B has real signal.
+  const darkTrace = [];
+  if (hasDarkZone && darkZoneStart !== null && darkBuildEnd !== null) {
+    let curDb = (aEndDb !== null) ? aEndDb : null;
     if (curDb !== null) {
       let prevKm = darkZoneStart;
-      // Generate slope + step points for each event in the dark zone
       for (const [evKm, evLoss] of darkEvts) {
-        // Slope to just before the event
         const nSeg = Math.max(2, Math.round((evKm - prevKm) / 0.3));
         for (let s = 1; s <= nSeg; s++) {
           const km = prevKm + (evKm - prevKm) * s / nSeg;
           curDb += aSlope * (km - (prevKm + (evKm - prevKm) * (s-1) / nSeg));
           darkTrace.push({ km: Math.round(km * 1000) / 1000, db: curDb });
         }
-        // Step loss at the splice event
-        curDb += evLoss;   // loss adds (trace goes more positive = more attenuation)
+        curDb += evLoss;
         darkTrace.push({ km: evKm, db: curDb });
         prevKm = evKm;
       }
-      // Slope to end of dark zone
-      const nEnd = Math.max(2, Math.round((darkZoneEnd - prevKm) / 0.3));
+      // Slope to darkBuildEnd (bStitchKm)
+      const nEnd = Math.max(2, Math.round((darkBuildEnd - prevKm) / 0.3));
       for (let s = 1; s <= nEnd; s++) {
-        const km = prevKm + (darkZoneEnd - prevKm) * s / nEnd;
-        curDb += aSlope * (km - (prevKm + (darkZoneEnd - prevKm) * (s-1) / nEnd));
+        const km = prevKm + (darkBuildEnd - prevKm) * s / nEnd;
+        curDb += aSlope * (km - (prevKm + (darkBuildEnd - prevKm) * (s-1) / nEnd));
         darkTrace.push({ km: Math.round(km * 1000) / 1000, db: curDb });
       }
     }
   }
 
-  // ── Expected dB at bStitchKm — computed from dark trace or A trace ──────────
+  // ── Expected dB at bStitchKm — from dark trace endpoint (always for broken fibers)
   let db_at_stitch = null;
   if (bStitchKm !== null) {
-    if (brk && !darkZone) {
-      // B meets A at the break — use A's last real sample
-      if (traceA) {
-        for (let i = traceA.length - 1; i >= 0; i--) {
-          if (traceA[i][0] <= brk.km) { db_at_stitch = traceA[i][1]; break; }
-        }
-      }
-    } else if (hasDarkZone && darkTrace.length > 0) {
-      // Use the dark zone extrapolation endpoint — most accurate for dark-zone fibers
-      // The dark trace was built from A's last real point + cumulative event losses
+    if (hasDarkZone && darkTrace.length > 0) {
+      // Dark trace was built to bStitchKm (B's clean launch end), avoiding Fresnel spike
       db_at_stitch = darkTrace[darkTrace.length - 1].db;
     } else if (aEndKm !== null) {
       if (bStitchKm <= aEndKm) {
@@ -1672,27 +1658,27 @@ function draw2D() {
         if (p2[0] > p1[0]) { var s = (p2[1]-p1[1])/(p2[0]-p1[0]); aSlope = Math.max(0.05, Math.min(s, 1.5)); }
       }
     }
-    var pdarkZone = pbrk && bLeftKm !== null && bLeftKm > pbrk.km + 1.0;
+    // Always stitch at B's clean launch end for broken fibers (avoids Fresnel spike)
     var bStitchKm;
-    if (pbrk && !pdarkZone) { bStitchKm = pbrk.km; }
-    else if (pbrk && pdarkZone) {
-      // Stitch at B's clean RIGHT end (B's launch side), not the noisy break end
+    if (pbrk && ptraceB && ptraceB.length >= 2) {
       var pinset = Math.max(1, Math.floor(ptraceB.length * 0.05));
       bStitchKm = ptraceB[ptraceB.length - 1 - pinset][0];
-    }
-    else if (ptraceB && ptraceB.length >= 4) { var inset=Math.max(1,Math.floor(ptraceB.length*0.10)); bStitchKm=ptraceB[inset][0]; }
-    else { bStitchKm = bLeftKm; }
-    // Dark zone event-table extrapolation (same logic as main buildCompositeTrace)
+    } else if (ptraceB && ptraceB.length >= 4) {
+      var inset = Math.max(1, Math.floor(ptraceB.length * 0.10));
+      bStitchKm = ptraceB[inset][0];
+    } else { bStitchKm = bLeftKm; }
+
     var pDarkZoneStart = pbrk ? pbrk.km : aEndKm;
-    var pDarkZoneEnd   = bLeftKm;
-    var pHasDarkZone   = pdarkZone || (!pbrk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
+    var pDarkZoneEnd   = bLeftKm;    // visual display boundary
+    var pDarkBuildEnd  = bStitchKm;  // build dark trace to stitch point for db_at_stitch
+    var pHasDarkZone   = !!pbrk || (!pbrk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
     var pfiberEvts = (data.fiber_events && pfnum && data.fiber_events[String(pfnum)]) || [];
-    var pDarkEvts = (pHasDarkZone && pDarkZoneStart !== null && pDarkZoneEnd !== null)
-      ? pfiberEvts.filter(function(e){ return e[0] > pDarkZoneStart + 0.1 && e[0] < pDarkZoneEnd - 0.1; })
+    var pDarkEvts = (pHasDarkZone && pDarkZoneStart !== null && pDarkBuildEnd !== null)
+      ? pfiberEvts.filter(function(e){ return e[0] > pDarkZoneStart + 0.1 && e[0] < pDarkBuildEnd - 0.1; })
       : [];
     var pDarkTrace = [];
-    if (pHasDarkZone && pDarkZoneStart !== null && pDarkZoneEnd !== null) {
-      var pCurDb = (pbrk && aEndDb !== null) ? aEndDb : (aEndDb !== null ? aEndDb : null);
+    if (pHasDarkZone && pDarkZoneStart !== null && pDarkBuildEnd !== null) {
+      var pCurDb = aEndDb !== null ? aEndDb : null;
       if (pCurDb !== null) {
         var pPrevKm = pDarkZoneStart;
         for (var ei2 = 0; ei2 < pDarkEvts.length; ei2++) {
@@ -1707,10 +1693,11 @@ function draw2D() {
           pDarkTrace.push([evKm2, pCurDb]);
           pPrevKm = evKm2;
         }
-        var nEnd2 = Math.max(2, Math.round((pDarkZoneEnd - pPrevKm) / 0.3));
+        // Slope to darkBuildEnd (bStitchKm)
+        var nEnd2 = Math.max(2, Math.round((pDarkBuildEnd - pPrevKm) / 0.3));
         for (var s3 = 1; s3 <= nEnd2; s3++) {
-          var ekm3 = pPrevKm + (pDarkZoneEnd - pPrevKm) * s3 / nEnd2;
-          pCurDb += aSlope * (ekm3 - (pPrevKm + (pDarkZoneEnd-pPrevKm)*(s3-1)/nEnd2));
+          var ekm3 = pPrevKm + (pDarkBuildEnd - pPrevKm) * s3 / nEnd2;
+          pCurDb += aSlope * (ekm3 - (pPrevKm + (pDarkBuildEnd-pPrevKm)*(s3-1)/nEnd2));
           pDarkTrace.push([Math.round(ekm3*1000)/1000, pCurDb]);
         }
       }
@@ -1718,9 +1705,7 @@ function draw2D() {
 
     var db_at_stitch = null;
     if (bStitchKm !== null) {
-      if (pbrk && !pdarkZone) {
-        if (ptraceA) { for (var i = ptraceA.length-1; i >= 0; i--) { if (ptraceA[i][0] <= pbrk.km) { db_at_stitch = ptraceA[i][1]; break; } } }
-      } else if (pHasDarkZone && pDarkTrace.length > 0) {
+      if (pHasDarkZone && pDarkTrace.length > 0) {
         db_at_stitch = pDarkTrace[pDarkTrace.length-1][1];
       } else if (aEndKm !== null) {
         if (bStitchKm <= aEndKm) { db_at_stitch = pInterp(ptraceA, bStitchKm); }
