@@ -520,7 +520,7 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   // both A and B directions (B converted to A-frame) with their splice losses.
   // We build this FIRST so we can use it to compute db_at_stitch at bStitchKm.
   const darkZoneStart = brk ? brk.km : aEndKm;  // where A real trace ends
-  const darkZoneEnd   = bStitchKm;               // where we anchor B
+  const darkZoneEnd   = bLeftKm;                 // where B's signal actually starts (not bStitchKm which is B's far clean end)
   const hasDarkZone   = darkZone || (!brk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
 
   // Per-fiber events in the dark zone range
@@ -614,9 +614,9 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     }
   }
 
-  // B raw samples from stitch onward
-  if (traceB && bStitchKm !== null) {
-    traceB.forEach(p => { if (p[0] >= bStitchKm - 0.05) kmSet.add(p[0]); });
+  // B raw samples from where B's signal actually starts (bLeftKm), not the stitch anchor
+  if (traceB && bLeftKm !== null) {
+    traceB.forEach(p => { if (p[0] >= bLeftKm - 0.05) kmSet.add(p[0]); });
   }
 
   // Dark trace lookup for O(1) access
@@ -652,19 +652,19 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
 
     // B: raw OTDR trace reversed + normalised
     let bDb = null;
-    if (traceB && bOffset !== null && bStitchKm !== null && bRightKm !== null
-        && km >= bStitchKm - 0.05 && km <= bRightKm + 0.05) {
+    if (traceB && bOffset !== null && bLeftKm !== null && bRightKm !== null
+        && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
       const bRaw = interp(traceB, km);
       if (bRaw !== null) bDb = bOffset - bRaw;
     }
 
-    // Combine: raw A, then event extrapolation, then raw B; average where both raw traces exist
+    // Combine: raw A/B first, extrapolation only fills the true gap
     let avg = null;
     if      (aDb !== null && bDb !== null) avg = (aDb + bDb) / 2;
     else if (aDb !== null)                 avg = aDb;
+    else if (bDb !== null)                 avg = bDb;
     else if (darkDb !== null)              avg = darkDb;
     else if (gapDb !== null)               avg = gapDb;
-    else if (bDb !== null)                 avg = bDb;
 
     if (avg !== null) result.push({ km, avg, aDb, bDb, darkDb });
   }
@@ -1684,7 +1684,7 @@ function draw2D() {
     else { bStitchKm = bLeftKm; }
     // Dark zone event-table extrapolation (same logic as main buildCompositeTrace)
     var pDarkZoneStart = pbrk ? pbrk.km : aEndKm;
-    var pDarkZoneEnd   = bStitchKm;
+    var pDarkZoneEnd   = bLeftKm;
     var pHasDarkZone   = pdarkZone || (!pbrk && aEndKm !== null && bStitchKm !== null && bStitchKm > aEndKm + 0.5);
     var pfiberEvts = (data.fiber_events && pfnum && data.fiber_events[String(pfnum)]) || [];
     var pDarkEvts = (pHasDarkZone && pDarkZoneStart !== null && pDarkZoneEnd !== null)
@@ -1740,7 +1740,7 @@ function draw2D() {
       var nPts = Math.max(4, Math.ceil((bStitchKm - aEndKm) / 0.2));
       for (var gi = 1; gi <= nPts; gi++) { var gkm = Math.round((aEndKm + (bStitchKm-aEndKm)*gi/nPts)*1000)/1000; kmSet[gkm] = 1; }
     }
-    if (ptraceB && bStitchKm !== null) ptraceB.forEach(function(p) { if (p[0] >= bStitchKm - 0.05) kmSet[p[0]] = 1; });
+    if (ptraceB && bLeftKm !== null) ptraceB.forEach(function(p) { if (p[0] >= bLeftKm - 0.05) kmSet[p[0]] = 1; });
     var kms = Object.keys(kmSet).map(Number).sort(function(a,b){return a-b;});
     var pDarkMap = {};
     pDarkTrace.forEach(function(p){ pDarkMap[p[0]] = p[1]; });
@@ -1758,17 +1758,17 @@ function draw2D() {
       if (!pbrk && !pHasDarkZone && aEndKm !== null && bStitchKm !== null && km > aEndKm && km < bStitchKm)
         gapDb = aEndDb + aSlope * (km - aEndKm);
       var bDb = null;
-      if (ptraceB && pbOffset !== null && bStitchKm !== null && bRightKm !== null
-          && km >= bStitchKm - 0.05 && km <= bRightKm + 0.05) {
+      if (ptraceB && pbOffset !== null && bLeftKm !== null && bRightKm !== null
+          && km >= bLeftKm - 0.05 && km <= bRightKm + 0.05) {
         var bRaw = pInterp(ptraceB, km);
         if (bRaw !== null) bDb = pbOffset - bRaw;
       }
       var avg = null;
       if      (aDb !== null && bDb !== null) avg = (aDb + bDb) / 2;
       else if (aDb !== null)                 avg = aDb;
+      else if (bDb !== null)                 avg = bDb;
       else if (darkDb2 !== null)             avg = darkDb2;
       else if (gapDb !== null)               avg = gapDb;
-      else if (bDb !== null)                 avg = bDb;
       if (avg !== null) res.push({ km: km, avg: avg, aDb: aDb, bDb: bDb });
     }
     return res;
