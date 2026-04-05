@@ -467,11 +467,11 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   const bLeftKm  = traceB && traceB.length > 0 ? traceB[0][0] : null;
   const bRightKm = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
 
-  // Slope of A from its last clean 10% of points (dB/km) — used to bridge gaps
-  const baseline = data.meta?.baseline ?? 0.19;
-  let aSlope = baseline;
+  // Slope of A trace (dB/km) — NEGATIVE because backscatter level DECREASES with distance.
+  // baseline stored as positive attenuation rate; negate it for use in extrapolation.
+  const baseline = -(data.meta?.baseline ?? 0.19);
+  let aSlope = baseline;  // negative: ~-0.19 dB/km
   if (traceA && traceA.length >= 6) {
-    // For broken fibers, only use points before the break for slope computation
     const validA = brk ? traceA.filter(p => p[0] <= brk.km + 0.001) : traceA;
     if (validA.length >= 6) {
       const n = Math.max(1, Math.floor(validA.length * 0.10));
@@ -479,7 +479,8 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
       const p2 = validA[validA.length - 1];
       if (p2[0] > p1[0]) {
         const s = (p2[1] - p1[1]) / (p2[0] - p1[0]);
-        aSlope = Math.max(0.05, Math.min(s, 1.5));
+        // Clamp to reasonable negative range: trace drops 0.05–1.5 dB/km
+        aSlope = Math.max(-1.5, Math.min(s, -0.05));
       }
     }
   }
@@ -541,7 +542,7 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
           curDb += aSlope * (km - (prevKm + (evKm - prevKm) * (s-1) / nSeg));
           darkTrace.push({ km: Math.round(km * 1000) / 1000, db: curDb });
         }
-        curDb += evLoss;
+        curDb -= evLoss;   // backscatter level drops at each splice
         darkTrace.push({ km: evKm, db: curDb });
         prevKm = evKm;
       }
@@ -1648,14 +1649,15 @@ function draw2D() {
     }
     var bLeftKm  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
     var bRightKm = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
-    var baseline = (data.meta && data.meta.baseline) || 0.19;
+    // Negative slope: backscatter DECREASES with distance
+    var baseline = -((data.meta && data.meta.baseline) || 0.19);
     var aSlope = baseline;
     if (ptraceA && ptraceA.length >= 6) {
       var validA = pbrk ? ptraceA.filter(function(p){return p[0]<=pbrk.km+0.001;}) : ptraceA;
       if (validA.length >= 6) {
         var n = Math.max(1, Math.floor(validA.length * 0.10));
         var p1 = validA[validA.length-1-n], p2 = validA[validA.length-1];
-        if (p2[0] > p1[0]) { var s = (p2[1]-p1[1])/(p2[0]-p1[0]); aSlope = Math.max(0.05, Math.min(s, 1.5)); }
+        if (p2[0] > p1[0]) { var s = (p2[1]-p1[1])/(p2[0]-p1[0]); aSlope = Math.max(-1.5, Math.min(s, -0.05)); }
       }
     }
     // Always stitch at B's clean launch end for broken fibers (avoids Fresnel spike)
@@ -1689,7 +1691,7 @@ function draw2D() {
             pCurDb += aSlope * (skm2 - (pPrevKm + (evKm2-pPrevKm)*(s2-1)/nSeg2));
             pDarkTrace.push([Math.round(skm2*1000)/1000, pCurDb]);
           }
-          pCurDb += evLoss2;
+          pCurDb -= evLoss2;   // backscatter drops at splice
           pDarkTrace.push([evKm2, pCurDb]);
           pPrevKm = evKm2;
         }
