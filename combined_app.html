@@ -467,20 +467,22 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   const bLeftKm  = traceB && traceB.length > 0 ? traceB[0][0] : null;
   const bRightKm = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
 
-  // Slope of A trace (dB/km) — NEGATIVE because backscatter level DECREASES with distance.
-  // baseline stored as positive attenuation rate; negate it for use in extrapolation.
-  const baseline = -(data.meta?.baseline ?? 0.19);
-  let aSlope = baseline;  // negative: ~-0.19 dB/km
-  if (traceA && traceA.length >= 6) {
-    const validA = brk ? traceA.filter(p => p[0] <= brk.km + 0.001) : traceA;
-    if (validA.length >= 6) {
-      const n = Math.max(1, Math.floor(validA.length * 0.10));
-      const p1 = validA[validA.length - 1 - n];
-      const p2 = validA[validA.length - 1];
+  // Fiber attenuation slope (dB/km, positive — trace loss increases with km).
+  // Use the pre-calibrated baseline from the splice report (median over all clean
+  // fiber segments). Do NOT compute from A's trace near the break: that region is
+  // contaminated by the Fresnel reflection spike and gives wildly wrong slopes.
+  const baseline = data.meta?.baseline ?? 0.19;
+  let aSlope = baseline;  // ~0.19 dB/km, positive (loss increases with km)
+  if (!brk && traceA && traceA.length >= 20) {
+    // For healthy fibers with no break, compute slope from a CLEAN MID-SPAN region
+    // (avoid the first 10% dead zone and last 10% noisy end)
+    const lo = Math.floor(traceA.length * 0.20);
+    const hi = Math.floor(traceA.length * 0.80);
+    if (hi > lo + 5) {
+      const p1 = traceA[lo], p2 = traceA[hi];
       if (p2[0] > p1[0]) {
         const s = (p2[1] - p1[1]) / (p2[0] - p1[0]);
-        // Clamp to reasonable negative range: trace drops 0.05–1.5 dB/km
-        aSlope = Math.max(-1.5, Math.min(s, -0.05));
+        if (s > 0.02 && s < 1.0) aSlope = s; // only use if physically reasonable
       }
     }
   }
@@ -542,7 +544,7 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
           curDb += aSlope * (km - (prevKm + (evKm - prevKm) * (s-1) / nSeg));
           darkTrace.push({ km: Math.round(km * 1000) / 1000, db: curDb });
         }
-        curDb -= evLoss;   // backscatter level drops at each splice
+        curDb += evLoss;   // splice loss adds to cumulative loss (values increase with km)
         darkTrace.push({ km: evKm, db: curDb });
         prevKm = evKm;
       }
@@ -1649,15 +1651,15 @@ function draw2D() {
     }
     var bLeftKm  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
     var bRightKm = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
-    // Negative slope: backscatter DECREASES with distance
-    var baseline = -((data.meta && data.meta.baseline) || 0.19);
-    var aSlope = baseline;
-    if (ptraceA && ptraceA.length >= 6) {
-      var validA = pbrk ? ptraceA.filter(function(p){return p[0]<=pbrk.km+0.001;}) : ptraceA;
-      if (validA.length >= 6) {
-        var n = Math.max(1, Math.floor(validA.length * 0.10));
-        var p1 = validA[validA.length-1-n], p2 = validA[validA.length-1];
-        if (p2[0] > p1[0]) { var s = (p2[1]-p1[1])/(p2[0]-p1[0]); aSlope = Math.max(-1.5, Math.min(s, -0.05)); }
+    // Use pre-calibrated baseline — never compute slope from noisy break region
+    var baseline = (data.meta && data.meta.baseline) || 0.19;
+    var aSlope = baseline;  // positive, ~0.19 dB/km
+    if (!pbrk && ptraceA && ptraceA.length >= 20) {
+      // Healthy fiber: compute slope from clean mid-span region only
+      var lo2 = Math.floor(ptraceA.length * 0.20), hi2 = Math.floor(ptraceA.length * 0.80);
+      if (hi2 > lo2 + 5) {
+        var pm1 = ptraceA[lo2], pm2 = ptraceA[hi2];
+        if (pm2[0] > pm1[0]) { var sm = (pm2[1]-pm1[1])/(pm2[0]-pm1[0]); if (sm > 0.02 && sm < 1.0) aSlope = sm; }
       }
     }
     // Always stitch at B's clean launch end for broken fibers (avoids Fresnel spike)
@@ -1691,7 +1693,7 @@ function draw2D() {
             pCurDb += aSlope * (skm2 - (pPrevKm + (evKm2-pPrevKm)*(s2-1)/nSeg2));
             pDarkTrace.push([Math.round(skm2*1000)/1000, pCurDb]);
           }
-          pCurDb -= evLoss2;   // backscatter drops at splice
+          pCurDb += evLoss2;   // splice loss adds to cumulative loss
           pDarkTrace.push([evKm2, pCurDb]);
           pPrevKm = evKm2;
         }
