@@ -448,18 +448,36 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     return null;
   }
 
-  // A's valid range — for broken fibers Python appends a noise cliff at span_km,
-  // so we must find the last REAL sample before the break (or before the cliff jump).
+  // A's valid CLEAN range — find where A's signal ends and noise begins.
+  // For broken fibers: Python appends a noise cliff at brk.km → use brk.km.
+  // For healthy fibers: the OTDR range may extend past the clean signal end,
+  //   so scan the trace for the point where values JUMP (noise floor spike).
+  //   A noise jump = local slope suddenly many times larger than baseline.
+  const baseline = data.meta?.baseline ?? 0.19;
   let aEndKm = null, aEndDb = null;
   if (traceA && traceA.length > 0) {
     if (brk) {
-      // Walk backwards to find last point at or before brk.km
       for (let i = traceA.length - 1; i >= 0; i--) {
         if (traceA[i][0] <= brk.km + 0.001) { aEndKm = traceA[i][0]; aEndDb = traceA[i][1]; break; }
       }
     } else {
+      // Scan for noise floor: find first point where the per-segment slope
+      // jumps to > 5× the calibrated baseline (a sign of noise, not signal).
+      // Use the raw trace array end as fallback.
       aEndKm = traceA[traceA.length-1][0];
       aEndDb = traceA[traceA.length-1][1];
+      const noiseThreshold = baseline * 5;
+      for (let i = 1; i < traceA.length; i++) {
+        const dkm = traceA[i][0] - traceA[i-1][0];
+        if (dkm <= 0) continue;
+        const localSlope = Math.abs((traceA[i][1] - traceA[i-1][1]) / dkm);
+        if (localSlope > noiseThreshold) {
+          // Noise starts here — back up one point
+          aEndKm = traceA[i-1][0];
+          aEndDb = traceA[i-1][1];
+          break;
+        }
+      }
     }
   }
 
@@ -467,12 +485,8 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   const bLeftKm  = traceB && traceB.length > 0 ? traceB[0][0] : null;
   const bRightKm = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
 
-  // Fiber attenuation slope (dB/km, positive — trace loss increases with km).
-  // Use the pre-calibrated baseline from the splice report (median over all clean
-  // fiber segments). Do NOT compute from A's trace near the break: that region is
-  // contaminated by the Fresnel reflection spike and gives wildly wrong slopes.
-  const baseline = data.meta?.baseline ?? 0.19;
-  let aSlope = baseline;  // ~0.19 dB/km, positive (loss increases with km)
+  // Fiber attenuation slope (dB/km) — use pre-calibrated median baseline.
+  let aSlope = baseline;  // ~0.19 dB/km
   if (!brk && traceA && traceA.length >= 20) {
     // For healthy fibers with no break, compute slope from a CLEAN MID-SPAN region
     // (avoid the first 10% dead zone and last 10% noisy end)
@@ -598,7 +612,7 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     window._dbgDone = true;
     console.log('=== COMPOSITE DEBUG fnum=' + fnum + ' ===');
     console.log('brk:', brk);
-    console.log('aEndKm:', aEndKm, '  aEndDb:', aEndDb);
+    console.log('aEndKm:', aEndKm, '  aEndDb:', aEndDb, '  (noise threshold:', baseline*5, 'dB/km)');
     console.log('bLeftKm:', bLeftKm, '  bRightKm:', bRightKm);
     console.log('bStitchKm:', bStitchKm);
     console.log('hasDarkZone:', hasDarkZone, '  darkZoneStart:', darkZoneStart, '  darkZoneEnd:', darkZoneEnd, '  darkBuildEnd:', darkBuildEnd);
@@ -1685,28 +1699,28 @@ function draw2D() {
       }
       return null;
     }
-    // Find A's real end (exclude noise cliff appended for broken fibers)
+    // Find A's clean signal end — scan for noise floor spike
+    var baseline = (data.meta && data.meta.baseline) || 0.19;
     var aEndKm = null, aEndDb = null;
     if (ptraceA && ptraceA.length > 0) {
       if (pbrk) {
         for (var ai = ptraceA.length-1; ai >= 0; ai--) {
           if (ptraceA[ai][0] <= pbrk.km + 0.001) { aEndKm = ptraceA[ai][0]; aEndDb = ptraceA[ai][1]; break; }
         }
-      } else { aEndKm = ptraceA[ptraceA.length-1][0]; aEndDb = ptraceA[ptraceA.length-1][1]; }
+      } else {
+        aEndKm = ptraceA[ptraceA.length-1][0]; aEndDb = ptraceA[ptraceA.length-1][1];
+        var pNoiseThresh = baseline * 5;
+        for (var ni = 1; ni < ptraceA.length; ni++) {
+          var pdkm = ptraceA[ni][0] - ptraceA[ni-1][0];
+          if (pdkm <= 0) continue;
+          var pSlp = Math.abs((ptraceA[ni][1] - ptraceA[ni-1][1]) / pdkm);
+          if (pSlp > pNoiseThresh) { aEndKm = ptraceA[ni-1][0]; aEndDb = ptraceA[ni-1][1]; break; }
+        }
+      }
     }
     var bLeftKm  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
     var bRightKm = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
-    // Use pre-calibrated baseline — never compute slope from noisy break region
-    var baseline = (data.meta && data.meta.baseline) || 0.19;
-    var aSlope = baseline;  // positive, ~0.19 dB/km
-    if (!pbrk && ptraceA && ptraceA.length >= 20) {
-      // Healthy fiber: compute slope from clean mid-span region only
-      var lo2 = Math.floor(ptraceA.length * 0.20), hi2 = Math.floor(ptraceA.length * 0.80);
-      if (hi2 > lo2 + 5) {
-        var pm1 = ptraceA[lo2], pm2 = ptraceA[hi2];
-        if (pm2[0] > pm1[0]) { var sm = (pm2[1]-pm1[1])/(pm2[0]-pm1[0]); if (sm > 0.02 && sm < 1.0) aSlope = sm; }
-      }
-    }
+    var aSlope = baseline;
     // BROKEN: stitch at B's clean launch end. HEALTHY: stitch at overlap midpoint.
     var bStitchKm;
     if (pbrk && ptraceB && ptraceB.length >= 2) {
