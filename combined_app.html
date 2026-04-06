@@ -502,12 +502,23 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   // can compute the expected dB level there.
   let bStitchKm;
   if (brk && traceB && traceB.length >= 2) {
-    // Always stitch at B's clean launch end for broken fibers
+    // BROKEN: stitch at B's clean launch end (bRightKm, far right in A-frame)
+    // Dark trace will extrapolate from A's break all the way here.
     const inset = Math.max(1, Math.floor(traceB.length * 0.05));
     bStitchKm = traceB[traceB.length - 1 - inset][0];
-  } else if (traceB && traceB.length >= 4) {
-    const inset = Math.max(1, Math.floor(traceB.length * 0.10));
-    bStitchKm = traceB[inset][0]; // Healthy: 10% in from B's left edge
+  } else if (traceB && aEndKm !== null) {
+    // HEALTHY: stitch at MIDPOINT of the overlap where both A and B have clean signal.
+    // bLeftKm = B's far/noisy end in A-frame (leftmost).
+    // aEndKm  = A's noise floor boundary (rightmost clean A point).
+    // Overlap = [bLeftKm, min(aEndKm, bRightKm)].
+    // Midpoint avoids the noisy edges on both sides.
+    const overlapHi = Math.min(aEndKm, bRightKm ?? aEndKm);
+    const overlapLo = bLeftKm;
+    if (overlapHi > overlapLo + 1.0) {
+      bStitchKm = (overlapLo + overlapHi) / 2;
+    } else {
+      bStitchKm = overlapHi; // fallback
+    }
   } else {
     bStitchKm = bLeftKm;
   }
@@ -597,11 +608,24 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     console.log('bRaw at stitch interp:', traceB ? interp(traceB, bStitchKm) : 'no traceB');
     console.log('bOffset:', bOffset);
     if (traceB) {
-      console.log('traceB[0]:', traceB[0], '  traceB[-1]:', traceB[traceB.length-1]);
-      console.log('traceB[mid]:', traceB[Math.floor(traceB.length/2)]);
+      console.log('traceB[0] km='+traceB[0][0]+' db='+traceB[0][1]+
+                '  traceB[-1] km='+traceB[traceB.length-1][0]+' db='+traceB[traceB.length-1][1]);
+      const bmid = Math.floor(traceB.length/2);
+      console.log('traceB[mid] km='+traceB[bmid][0]+' db='+traceB[bmid][1]);
     }
     if (traceA) {
-      console.log('traceA[0]:', traceA[0], '  traceA[-1]:', traceA[traceA.length-1]);
+      console.log('traceA[0] km='+traceA[0][0]+' db='+traceA[0][1]+
+                  '  traceA[-1] km='+traceA[traceA.length-1][0]+' db='+traceA[traceA.length-1][1]);
+    }
+    // Also log what bDb would be at a few spot-check km points
+    if (traceB && bOffset !== null && bLeftKm !== null) {
+      for (const ckm of [bLeftKm, bStitchKm, bRightKm]) {
+        if (ckm === null) continue;
+        const braw = interp(traceB, ckm);
+        const bdisp = braw !== null ? bOffset - braw : null;
+        const adisp = traceA ? interp(traceA, ckm) : null;
+        console.log('  CHECK km='+ckm+': bRaw='+braw+' bDb='+bdisp+' aDb='+adisp);
+      }
     }
   }
 
@@ -1683,14 +1707,19 @@ function draw2D() {
         if (pm2[0] > pm1[0]) { var sm = (pm2[1]-pm1[1])/(pm2[0]-pm1[0]); if (sm > 0.02 && sm < 1.0) aSlope = sm; }
       }
     }
-    // Always stitch at B's clean launch end for broken fibers (avoids Fresnel spike)
+    // BROKEN: stitch at B's clean launch end. HEALTHY: stitch at overlap midpoint.
     var bStitchKm;
     if (pbrk && ptraceB && ptraceB.length >= 2) {
       var pinset = Math.max(1, Math.floor(ptraceB.length * 0.05));
       bStitchKm = ptraceB[ptraceB.length - 1 - pinset][0];
-    } else if (ptraceB && ptraceB.length >= 4) {
-      var inset = Math.max(1, Math.floor(ptraceB.length * 0.10));
-      bStitchKm = ptraceB[inset][0];
+    } else if (ptraceB && aEndKm !== null) {
+      var pOverlapHi = Math.min(aEndKm, bRightKm !== null ? bRightKm : aEndKm);
+      var pOverlapLo = bLeftKm;
+      if (pOverlapHi > pOverlapLo + 1.0) {
+        bStitchKm = (pOverlapLo + pOverlapHi) / 2;
+      } else {
+        bStitchKm = pOverlapHi;
+      }
     } else { bStitchKm = bLeftKm; }
 
     var pDarkZoneStart = pbrk ? pbrk.km : aEndKm;
