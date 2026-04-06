@@ -576,12 +576,33 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
   }
 
   // B offset: db_B_display(km) = bOffset − db_b_raw(km)
-  // Anchored at bStitchKm (B's clean launch end) so the formula gives the
-  // right cumulative loss level everywhere across B's range.
   let bOffset = null;
   if (traceB && traceB.length >= 2 && bStitchKm !== null && db_at_stitch !== null) {
     const db_B_stitch = interp(traceB, bStitchKm);
     if (db_B_stitch !== null) bOffset = db_at_stitch + db_B_stitch;
+  }
+
+  // ── DEBUG: print key values for first call only ──────────────────────────
+  if (!window._dbgDone) {
+    window._dbgDone = true;
+    console.log('=== COMPOSITE DEBUG fnum=' + fnum + ' ===');
+    console.log('brk:', brk);
+    console.log('aEndKm:', aEndKm, '  aEndDb:', aEndDb);
+    console.log('bLeftKm:', bLeftKm, '  bRightKm:', bRightKm);
+    console.log('bStitchKm:', bStitchKm);
+    console.log('hasDarkZone:', hasDarkZone, '  darkZoneStart:', darkZoneStart, '  darkZoneEnd:', darkZoneEnd, '  darkBuildEnd:', darkBuildEnd);
+    console.log('darkTrace points:', darkTrace.length, '  first:', darkTrace[0], '  last:', darkTrace[darkTrace.length-1]);
+    console.log('aSlope:', aSlope, '  baseline:', data.meta?.baseline);
+    console.log('db_at_stitch:', db_at_stitch);
+    console.log('bRaw at stitch interp:', traceB ? interp(traceB, bStitchKm) : 'no traceB');
+    console.log('bOffset:', bOffset);
+    if (traceB) {
+      console.log('traceB[0]:', traceB[0], '  traceB[-1]:', traceB[traceB.length-1]);
+      console.log('traceB[mid]:', traceB[Math.floor(traceB.length/2)]);
+    }
+    if (traceA) {
+      console.log('traceA[0]:', traceA[0], '  traceA[-1]:', traceA[traceA.length-1]);
+    }
   }
 
   // ── Build km point set ──────────────────────────────────────────────────────
