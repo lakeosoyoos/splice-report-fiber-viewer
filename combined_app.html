@@ -448,12 +448,42 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     return null;
   }
 
-  // A's valid CLEAN range — find where A's signal ends and noise begins.
-  // For broken fibers: Python appends noise cliff at brk.km → clip there.
-  // For healthy fibers: scan left→right, skip first 5 km (launch connector),
-  //   stop where per-segment slope > 5× baseline (noise floor spike).
   const baseline = data.meta?.baseline ?? 0.19;
-  const noiseThresh = baseline * 5;
+
+  // Find clean signal end of a trace using line-fit deviation.
+  // Strategy: fit a line through the FIRST 30% of clean points (skip launch 5 km),
+  // extrapolate it, then find the first point that deviates ABOVE the line by
+  // more than 3 dB — that's where noise overtakes signal.
+  // Works for both gradual noise onset and sharp cliffs.
+  function findCleanEnd(tr, skipKmLo, skipKmHi, scanReverse) {
+    if (!tr || tr.length < 4) return scanReverse ? (tr?.[0]?.[0] ?? null) : (tr?.[tr.length-1]?.[0] ?? null);
+    // Build working array: forward or reversed
+    const pts = scanReverse ? [...tr].reverse() : [...tr];
+    // Skip launch zone
+    const clean = pts.filter(p => p[0] > skipKmLo && p[0] < (skipKmHi ?? Infinity));
+    if (clean.length < 4) return scanReverse ? tr[0][0] : tr[tr.length-1][0];
+    // Fit line to first 30% of clean points
+    const fitN = Math.max(4, Math.floor(clean.length * 0.30));
+    const fitPts = clean.slice(0, fitN);
+    let sx=0, sy=0, sxy=0, sxx=0, n=fitPts.length;
+    for (const [km,db] of fitPts) { sx+=km; sy+=db; sxy+=km*db; sxx+=km*km; }
+    const det = n*sxx - sx*sx;
+    if (Math.abs(det) < 1e-9) return scanReverse ? tr[0][0] : tr[tr.length-1][0];
+    const slope = (n*sxy - sx*sy) / det;
+    const intercept = (sy - slope*sx) / n;
+    // Scan all clean points; stop where actual value is > 3 dB above fitted line
+    // (noise goes UP from the line for a trace where higher dB = more loss)
+    let endKm = clean[clean.length-1][0];
+    let endDb = clean[clean.length-1][1];
+    for (const [km, db] of clean) {
+      const expected = slope * km + intercept;
+      const deviation = db - expected;      // positive = above line = more loss = noise
+      if (deviation > 3.0) { endKm = km; endDb = db; break; }
+    }
+    return { km: endKm, db: endDb };
+  }
+
+  // A clean end
   let aEndKm = null, aEndDb = null;
   if (traceA && traceA.length > 0) {
     if (brk) {
@@ -461,39 +491,21 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
         if (traceA[i][0] <= brk.km + 0.001) { aEndKm = traceA[i][0]; aEndDb = traceA[i][1]; break; }
       }
     } else {
-      aEndKm = traceA[traceA.length-1][0];
-      aEndDb = traceA[traceA.length-1][1];
-      for (let i = 1; i < traceA.length; i++) {
-        if (traceA[i][0] < 5.0) continue; // skip launch zone
-        const dkm = traceA[i][0] - traceA[i-1][0];
-        if (dkm <= 0) continue;
-        const localSlope = Math.abs((traceA[i][1] - traceA[i-1][1]) / dkm);
-        if (localSlope > noiseThresh) {
-          aEndKm = traceA[i-1][0];
-          aEndDb = traceA[i-1][1];
-          break;
-        }
-      }
+      const r = findCleanEnd(traceA, 5.0, null, false);
+      if (r && r.km !== undefined) { aEndKm = r.km; aEndDb = r.db; }
+      else { aEndKm = traceA[traceA.length-1][0]; aEndDb = traceA[traceA.length-1][1]; }
     }
   }
 
-  // B's valid CLEAN range in A-frame — B's noise is at its LEFT end (far from B's launch).
-  // Scan B right→left (high km_a → low km_a), stop where slope > 5× baseline.
-  // This gives bCleanLeftKm: the true left boundary of B's clean signal.
+  // B clean left boundary — B is in A-frame so its noise is at LOW km (B's far/noisy end).
+  // Scan B in REVERSE (right→left in A-frame = launch→far in B-frame).
+  // Skip B's launch zone (5 km from bRawRight).
   const bRawLeft  = traceB && traceB.length > 0 ? traceB[0][0] : null;
   const bRawRight = traceB && traceB.length > 0 ? traceB[traceB.length-1][0] : null;
   let bCleanLeftKm = bRawLeft;
-  if (traceB && traceB.length > 1) {
-    for (let i = traceB.length - 1; i >= 1; i--) {
-      if (traceB[i][0] > bRawRight - 5.0) continue; // skip B's launch zone (right side)
-      const dkm = traceB[i][0] - traceB[i-1][0];
-      if (dkm <= 0) continue;
-      const localSlope = Math.abs((traceB[i][1] - traceB[i-1][1]) / dkm);
-      if (localSlope > noiseThresh) {
-        bCleanLeftKm = traceB[i][0]; // noise found here — B clean starts AFTER this
-        break;
-      }
-    }
+  if (traceB && traceB.length > 3 && bRawRight !== null) {
+    const r = findCleanEnd(traceB, -Infinity, bRawRight - 5.0, true);
+    if (r && r.km !== undefined) bCleanLeftKm = r.km;
   }
 
   // B's range in A-frame coords — use noise-clipped bCleanLeftKm (computed above)
@@ -627,7 +639,7 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
     window._dbgDone = true;
     console.log('=== COMPOSITE DEBUG fnum=' + fnum + ' ===');
     console.log('brk:', brk);
-    console.log('aEndKm:', aEndKm, '  aEndDb:', aEndDb, '  (noiseThresh:', noiseThresh, 'dB/km)');
+    console.log('aEndKm:', aEndKm, '  aEndDb:', aEndDb);
     console.log('bRawLeft:', bRawLeft, '→ bCleanLeftKm:', bCleanLeftKm, '  bRightKm:', bRightKm);
     console.log('bStitchKm:', bStitchKm);
     console.log('hasDarkZone:', hasDarkZone, '  darkZoneStart:', darkZoneStart, '  darkZoneEnd:', darkZoneEnd, '  darkBuildEnd:', darkBuildEnd);
@@ -802,18 +814,21 @@ function draw2D() {
     }
   }
 
-  // Helper: find clean signal end km for a raw trace array
-  const _baseline = data.meta?.baseline ?? 0.19;
-  const _noiseThresh = _baseline * 5;
+  // Helper: find clean signal end km for range/draw loops
   function cleanEndKm(t, brk) {
     if (!t || t.length === 0) return 0;
     if (brk) return brk.km;
-    for (let i = 1; i < t.length; i++) {
-      if (t[i][0] < 5.0) continue;
-      const dkm = t[i][0] - t[i-1][0];
-      if (dkm <= 0) continue;
-      if (Math.abs((t[i][1] - t[i-1][1]) / dkm) > _noiseThresh) return t[i-1][0];
-    }
+    // Fit line to first 30%, find where trace deviates > 3 dB above it
+    const clean = t.filter(p => p[0] > 5.0);
+    if (clean.length < 4) return t[t.length-1][0];
+    const fitN = Math.max(4, Math.floor(clean.length * 0.30));
+    const fp = clean.slice(0, fitN);
+    let sx=0,sy=0,sxy=0,sxx=0,n=fp.length;
+    for (const [km,db] of fp) { sx+=km; sy+=db; sxy+=km*db; sxx+=km*km; }
+    const det = n*sxx-sx*sx;
+    if (Math.abs(det)<1e-9) return t[t.length-1][0];
+    const sl=(n*sxy-sx*sy)/det, ic=(sy-sl*sx)/n;
+    for (const [km,db] of clean) { if (db-(sl*km+ic)>3.0) return km; }
     return t[t.length-1][0];
   }
 
@@ -981,16 +996,7 @@ function draw2D() {
         ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fillStyle = '#FF4444'; ctx.fill();
       } else {
         // Healthy — draw only clean signal, stop at noise floor
-        const aBaseline = data.meta?.baseline ?? 0.19;
-        const aNoiseThresh = aBaseline * 5;
-        let aClipKm = trace[trace.length-1][0]; // fallback: full trace
-        for (let i = 1; i < trace.length; i++) {
-          if (trace[i][0] < 5.0) continue; // skip launch zone
-          const dkm = trace[i][0] - trace[i-1][0];
-          if (dkm <= 0) continue;
-          const slp = Math.abs((trace[i][1] - trace[i-1][1]) / dkm);
-          if (slp > aNoiseThresh) { aClipKm = trace[i-1][0]; break; }
-        }
+        const aClipKm = cleanEndKm(trace, null);
         ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
         ctx.beginPath(); let started2 = false;
         for (let i = 0; i < trace.length; i++) {
@@ -1742,8 +1748,24 @@ function draw2D() {
       }
       return null;
     }
-    // Find A's clean signal end — scan for noise floor spike
     var baseline = (data.meta && data.meta.baseline) || 0.19;
+    // Shared line-fit noise detector (same logic as main buildCompositeTrace)
+    function pfindCleanEnd(tr, skipLo, skipHi, rev) {
+      if (!tr || tr.length < 4) return rev ? (tr&&tr[0]?tr[0][0]:null) : (tr&&tr[tr.length-1]?tr[tr.length-1][0]:null);
+      var pts = rev ? tr.slice().reverse() : tr.slice();
+      var cl = pts.filter(function(p){ return p[0] > skipLo && p[0] < (skipHi||Infinity); });
+      if (cl.length < 4) return rev ? tr[0][0] : tr[tr.length-1][0];
+      var fn = Math.max(4, Math.floor(cl.length*0.30));
+      var fp = cl.slice(0,fn);
+      var sx=0,sy=0,sxy=0,sxx=0,n=fp.length;
+      for (var fi=0;fi<n;fi++){sx+=fp[fi][0];sy+=fp[fi][1];sxy+=fp[fi][0]*fp[fi][1];sxx+=fp[fi][0]*fp[fi][0];}
+      var det=n*sxx-sx*sx; if(Math.abs(det)<1e-9) return rev?tr[0][0]:tr[tr.length-1][0];
+      var sl=(n*sxy-sx*sy)/det, ic=(sy-sl*sx)/n;
+      var ek=cl[cl.length-1][0], ed=cl[cl.length-1][1];
+      for(var ci=0;ci<cl.length;ci++){ if(cl[ci][1]-(sl*cl[ci][0]+ic)>3.0){ek=cl[ci][0];ed=cl[ci][1];break;} }
+      return {km:ek,db:ed};
+    }
+    // A clean end
     var aEndKm = null, aEndDb = null;
     if (ptraceA && ptraceA.length > 0) {
       if (pbrk) {
@@ -1751,29 +1773,18 @@ function draw2D() {
           if (ptraceA[ai][0] <= pbrk.km + 0.001) { aEndKm = ptraceA[ai][0]; aEndDb = ptraceA[ai][1]; break; }
         }
       } else {
-        aEndKm = ptraceA[ptraceA.length-1][0]; aEndDb = ptraceA[ptraceA.length-1][1];
-        var pNoiseThresh = baseline * 5;
-        for (var ni = 1; ni < ptraceA.length; ni++) {
-          var pdkm = ptraceA[ni][0] - ptraceA[ni-1][0];
-          if (pdkm <= 0) continue;
-          var pSlp = Math.abs((ptraceA[ni][1] - ptraceA[ni-1][1]) / pdkm);
-          if (pSlp > pNoiseThresh) { aEndKm = ptraceA[ni-1][0]; aEndDb = ptraceA[ni-1][1]; break; }
-        }
+        var pr = pfindCleanEnd(ptraceA, 5.0, null, false);
+        if (pr && pr.km !== undefined) { aEndKm = pr.km; aEndDb = pr.db; }
+        else { aEndKm = ptraceA[ptraceA.length-1][0]; aEndDb = ptraceA[ptraceA.length-1][1]; }
       }
     }
-    // Detect B's clean left boundary — scan right→left, stop at noise spike
+    // B clean left boundary
     var pbRawLeft  = ptraceB && ptraceB.length > 0 ? ptraceB[0][0] : null;
     var pbRawRight = ptraceB && ptraceB.length > 0 ? ptraceB[ptraceB.length-1][0] : null;
     var pbCleanLeft = pbRawLeft;
-    if (ptraceB && ptraceB.length > 1) {
-      var pbNoiseThresh = baseline * 5;
-      for (var bi2 = ptraceB.length-1; bi2 >= 1; bi2--) {
-        if (ptraceB[bi2][0] > pbRawRight - 5.0) continue;
-        var pbdkm = ptraceB[bi2][0] - ptraceB[bi2-1][0];
-        if (pbdkm <= 0) continue;
-        var pbSlp = Math.abs((ptraceB[bi2][1] - ptraceB[bi2-1][1]) / pbdkm);
-        if (pbSlp > pbNoiseThresh) { pbCleanLeft = ptraceB[bi2][0]; break; }
-      }
+    if (ptraceB && ptraceB.length > 3 && pbRawRight !== null) {
+      var pr2 = pfindCleanEnd(ptraceB, -Infinity, pbRawRight-5.0, true);
+      if (pr2 && pr2.km !== undefined) pbCleanLeft = pr2.km;
     }
     var bLeftKm  = pbCleanLeft;
     var bRightKm = pbRawRight;
