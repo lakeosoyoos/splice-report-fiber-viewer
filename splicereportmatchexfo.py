@@ -86,8 +86,15 @@ def load_all(dir_a, dir_b):
     fibers_a, fibers_b = {}, {}
 
     def extract_fiber_num(fn):
-        base = fn.split('.')[0]
-        base = base.split('_')[0]
+        base = fn.split('.')[0]          # drop extension
+        parts = base.split('_')          # split on underscore
+        # The fiber number is the LAST all-digit segment (e.g. "084" in
+        # FTHNTXAD06_FTHNTXAD01_084).  Walk parts right-to-left.
+        for part in reversed(parts):
+            digits = ''.join(c for c in part if c.isdigit())
+            if digits:
+                return int(digits)
+        # Fallback: strip all non-digits from whole base
         digits = ''.join(c for c in base if c.isdigit())
         return int(digits) if digits else None
 
