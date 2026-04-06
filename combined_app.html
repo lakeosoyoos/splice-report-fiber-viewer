@@ -759,22 +759,25 @@ function updateEvtTable() {
   }
   const rows = [];
   for (const fnum of fibers) {
-    const ra = data._raw_events_a && data._raw_events_a[String(fnum)];
-    const evts = data.fiber_events && data.fiber_events[String(fnum)];
-    const brk  = data.breaks && data.breaks[String(fnum)];
-    const spanKm = data.meta.span_km;
-    // Use fiber_events which already has both A and B events in A-frame
-    if (!evts || evts.length === 0) continue;
+    const rawEvts = data.raw_events_a && data.raw_events_a[String(fnum)];
+    const brk     = data.breaks && data.breaks[String(fnum)];
+    const spanKm  = data.meta.span_km;
+    if (!rawEvts || rawEvts.length === 0) continue;
     if (fibers.length > 1) {
       rows.push(`<tr><td colspan="7" class="evt-hdr">F${fnum}${brk ? ` ⚠ BREAK @ ${brk.km.toFixed(3)} km` : ''}</td></tr>`);
     }
-    for (const [km, loss] of evts) {
-      const ft = Math.round(km * 3280.84).toLocaleString();
+    for (const e of rawEvts) {
+      const km   = e.km;
+      const ft   = Math.round(km * 3280.84).toLocaleString();
       const isBrk = brk && Math.abs(km - brk.km) < 0.5;
-      const isEnd = Math.abs(km - spanKm) < 1.0;
-      const cls = isBrk ? 'evt-brk' : isEnd ? 'evt-end' : '';
-      const type = isBrk ? '1F BREAK' : isEnd ? '1E END' : '0F Splice';
-      rows.push(`<tr class="${cls}"><td>${fnum}</td><td>${km.toFixed(3)}</td><td>${ft}</td><td>${type}</td><td>${loss > 0 ? loss.toFixed(4) : '—'}</td><td>—</td><td>—</td></tr>`);
+      const isEnd  = e.is_end || Math.abs(km - spanKm) < 1.0;
+      const isRefl = e.is_reflective && !isEnd;
+      const cls  = isBrk ? 'evt-brk' : isEnd ? 'evt-end' : isRefl ? 'evt-refl' : '';
+      const type = isBrk ? '1F BREAK' : isEnd ? '1E END' : isRefl ? '1F Refl' : '0F Splice';
+      const loss  = e.splice_loss > 0.001 ? e.splice_loss.toFixed(4) : '—';
+      const refl  = e.reflection < -0.5 ? e.reflection.toFixed(2) + ' dB' : '—';
+      const slope = e.slope !== 0 ? e.slope.toFixed(4) : '—';
+      rows.push(`<tr class="${cls}"><td>${fnum}</td><td>${km.toFixed(3)}</td><td>${ft}</td><td>${type}</td><td>${loss}</td><td>${refl}</td><td>${slope}</td></tr>`);
     }
   }
   tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="7" style="color:#666;text-align:center;padding:12px">No events found</td></tr>';

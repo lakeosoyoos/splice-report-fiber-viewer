@@ -748,6 +748,22 @@ if run_button and has_a:
         'fiber_traces': fiber_traces,
         'fiber_traces_b': fiber_traces_b,
         'fiber_events': fiber_events,
+        'raw_events_a': {
+            str(fnum): [
+                {
+                    'km':         round(float(e['dist_km']), 4),
+                    'splice_loss': round(float(e.get('splice_loss', 0)), 4),
+                    'reflection':  round(float(e.get('reflection', 0)), 4),
+                    'slope':       round(float(e.get('slope', 0)), 4),
+                    'type':        e.get('type', ''),
+                    'is_reflective': bool(e.get('is_reflective', False)),
+                    'is_end':      bool(e.get('is_end', False)),
+                }
+                for e in fibers_a[fnum].get('events', [])
+                if e.get('dist_km', 0) > 0.1
+            ]
+            for fnum in sorted(fibers_a.keys())
+        },
     }
 
     bar.progress(0.95, text="Building viewer...")
