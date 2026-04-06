@@ -95,8 +95,8 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
 </div>
 <div id="right">
   <div id="right-toolbar">
-    <button class="tc-btn" onclick="popoutOpen()">⛶ Pop Out 2D</button>
-    <button class="tc-btn-outline" id="collapse-btn" onclick="collapseToggle()">▶ Collapse 2D</button>
+    <button class="tc-btn" onclick="popoutOpen()">⛶ Pop Out Right Screen</button>
+    <button class="tc-btn-outline" id="collapse-btn" onclick="collapseToggle()">▶ Collapse Right Screen</button>
   </div>
   <div id="top-panel">
     <canvas id="trace-canvas"></canvas>
@@ -131,7 +131,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     <div id="topo-tooltip"></div>
   </div>
 </div>
-<button id="restore-btn" onclick="collapseToggle()">◀ Expand 2D</button>
+<button id="restore-btn" onclick="collapseToggle()">◀ Expand Right Screen</button>
 <div id="setup-screen" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#f8f9fa;z-index:200;display:flex;align-items:center;justify-content:center">
   <div style="background:#fff;border:1px solid #ccc;border-radius:12px;padding:30px 40px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
     <h1 style="color:#1F4E79;font-size:20px;margin-bottom:8px">Splice Report Viewer</h1>
@@ -802,7 +802,22 @@ function draw2D() {
     }
   }
 
-  // Find ranges from signal-only data (skip noise cliff for broken fibers)
+  // Helper: find clean signal end km for a raw trace array
+  const _baseline = data.meta?.baseline ?? 0.19;
+  const _noiseThresh = _baseline * 5;
+  function cleanEndKm(t, brk) {
+    if (!t || t.length === 0) return 0;
+    if (brk) return brk.km;
+    for (let i = 1; i < t.length; i++) {
+      if (t[i][0] < 5.0) continue;
+      const dkm = t[i][0] - t[i-1][0];
+      if (dkm <= 0) continue;
+      if (Math.abs((t[i][1] - t[i-1][1]) / dkm) > _noiseThresh) return t[i-1][0];
+    }
+    return t[t.length-1][0];
+  }
+
+  // Find ranges from signal-only data (skip noise cliff for broken and healthy fibers)
   let globalMinDb = Infinity, globalMaxDb = -Infinity, globalMaxKm = 0;
   for (const f of fibers) {
     const brk = data.breaks?.[String(f)];
@@ -815,8 +830,9 @@ function draw2D() {
     } else {
       const t = data.fiber_traces?.[String(f)];
       if (!t) continue;
+      const clipKm = cleanEndKm(t, brk);
       for (const [km, db] of t) {
-        if (brk && km > brk.km + 0.1) continue; // skip noise cliff
+        if (km > clipKm + 0.1) continue;
         if (db < globalMinDb) globalMinDb = db;
         if (db > globalMaxDb) globalMaxDb = db;
         if (km > globalMaxKm) globalMaxKm = km;
@@ -845,8 +861,9 @@ function draw2D() {
     } else {
       const t = data.fiber_traces?.[String(f)];
       if (!t) continue;
+      const clipKm2 = cleanEndKm(t, brk);
       for (const [km, db] of t) {
-        if (brk && km > brk.km + 0.1) continue; // skip noise cliff
+        if (km > clipKm2 + 0.1) continue;
         if (km >= viewKmStart && km <= viewKmEnd) {
           if (db < minDb) minDb = db;
           if (db > maxDb) maxDb = db;
@@ -963,12 +980,23 @@ function draw2D() {
         ctx.fillText(`F${fnum} ${brk.type}`, bx + 3, by - 5);
         ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fillStyle = '#FF4444'; ctx.fill();
       } else {
-        // Healthy — all grey
+        // Healthy — draw only clean signal, stop at noise floor
+        const aBaseline = data.meta?.baseline ?? 0.19;
+        const aNoiseThresh = aBaseline * 5;
+        let aClipKm = trace[trace.length-1][0]; // fallback: full trace
+        for (let i = 1; i < trace.length; i++) {
+          if (trace[i][0] < 5.0) continue; // skip launch zone
+          const dkm = trace[i][0] - trace[i-1][0];
+          if (dkm <= 0) continue;
+          const slp = Math.abs((trace[i][1] - trace[i-1][1]) / dkm);
+          if (slp > aNoiseThresh) { aClipKm = trace[i-1][0]; break; }
+        }
         ctx.strokeStyle = greys[fi % greys.length]; ctx.lineWidth = lw;
-        ctx.beginPath();
+        ctx.beginPath(); let started2 = false;
         for (let i = 0; i < trace.length; i++) {
+          if (trace[i][0] > aClipKm) break;
           const x = kmToX(trace[i][0]), y = dbToY(trace[i][1]);
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          if (!started2) { ctx.moveTo(x, y); started2 = true; } else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
@@ -2227,13 +2255,13 @@ window.collapseToggle = function() {
     right.style.display = 'none';
     left.style.width = '100vw';
     if (restore) restore.style.display = 'block';
-    if (btn) btn.textContent = '▶ Collapse 2D';  // button hidden while collapsed, reset for restore
+    if (btn) btn.textContent = '▶ Collapse Right Screen';  // button hidden while collapsed, reset for restore
   } else {
     right.style.display = 'flex';
     right.style.width = '55vw';
     left.style.width = '45vw';
     if (restore) restore.style.display = 'none';
-    if (btn) btn.textContent = '▶ Collapse 2D';
+    if (btn) btn.textContent = '▶ Collapse Right Screen';
     requestAnimationFrame(function() { draw2D(); });
   }
 };
