@@ -318,7 +318,8 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                     est_str = f"{est_bidir:.3f}"
                     if est_str.startswith('0.'): est_str = est_str[1:]
                     a_offset_ft = round((ea['dist_km'] - sp_km) * 3280.84)
-                    a_off_str = f"{a_offset_ft:+.0f} ft" if a_offset_ft != 0 else "at splice"
+                    splice_num = si + 1
+                    a_off_str = f"{abs(a_offset_ft):.0f} ft from Splice {splice_num}" if a_offset_ft != 0 else f"at Splice {splice_num}"
                     results[(fnum, si)] = {
                         'fiber': fnum, 'splice_idx': si,
                         'bidir_loss': est_bidir,      # treat as the bidir value
@@ -347,9 +348,10 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                 continue
 
             offset_ft = round((bidir_dist - sp_km) * 3280.84)
-            offset_str = f"{offset_ft:+.0f} ft" if offset_ft != 0 else "at splice"
+            splice_num = si + 1
+            offset_str = f"{abs(offset_ft):.0f} ft from Splice {splice_num}" if offset_ft != 0 else f"at Splice {splice_num}"
             if is_break:
-                label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_ft):.0f} ft from splice)"
+                label = f"{fnum} BREAK {bidir_loss:.3f} ({offset_str})"
             else:
                 loss_str = f"{bidir_loss:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
@@ -451,7 +453,8 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
             sp_km_nearest = splices[nearest_si]['position_km']
             b_offset_ft = round((a_frame_km - sp_km_nearest) * 3280.84)
-            b_off_str = f"{b_offset_ft:+.0f} ft" if b_offset_ft != 0 else "at splice"
+            splice_num_b = nearest_si + 1
+            b_off_str = f"{abs(b_offset_ft):.0f} ft from Splice {splice_num_b}" if b_offset_ft != 0 else f"at Splice {splice_num_b}"
 
             if a_evt is not None:
                 # A event exists — compute bidirectional
