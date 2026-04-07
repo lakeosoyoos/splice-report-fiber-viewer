@@ -317,6 +317,8 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                 if est_bidir >= threshold:
                     est_str = f"{est_bidir:.3f}"
                     if est_str.startswith('0.'): est_str = est_str[1:]
+                    a_offset_ft = round((ea['dist_km'] - sp_km) * 3280.84)
+                    a_off_str = f"{a_offset_ft:+.0f} ft" if a_offset_ft != 0 else "at splice"
                     results[(fnum, si)] = {
                         'fiber': fnum, 'splice_idx': si,
                         'bidir_loss': est_bidir,      # treat as the bidir value
@@ -328,7 +330,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                         'is_bfill': False, 'is_a_only': True, 'is_b_only': False,
                         'is_flagged': True, 'event_source': 'a_only',
                         'event_type': ea['type'],
-                        'label': f"{fnum} {est_str} (A)",  # clean: 285 .160 (A)
+                        'label': f"{fnum} {est_str} (A) ({a_off_str})",
                     }
                 continue
 
@@ -344,13 +346,14 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             if not is_flagged:
                 continue
 
+            offset_ft = round((bidir_dist - sp_km) * 3280.84)
+            offset_str = f"{offset_ft:+.0f} ft" if offset_ft != 0 else "at splice"
             if is_break:
-                offset_m = round((bidir_dist - sp_km) * 1000, 1)
-                label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_m):.0f}m from splice)"
+                label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_ft):.0f} ft from splice)"
             else:
                 loss_str = f"{bidir_loss:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                label = f"{fnum} {loss_str}"
+                label = f"{fnum} {loss_str} ({offset_str})"
 
             results[(fnum, si)] = {
                 'fiber': fnum, 'splice_idx': si,
@@ -446,6 +449,10 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                         if a_evt is None or abs(ae['dist_km'] - a_frame_km) < abs(a_evt['dist_km'] - a_frame_km):
                             a_evt = ae
 
+            sp_km_nearest = splices[nearest_si]['position_km']
+            b_offset_ft = round((a_frame_km - sp_km_nearest) * 3280.84)
+            b_off_str = f"{b_offset_ft:+.0f} ft" if b_offset_ft != 0 else "at splice"
+
             if a_evt is not None:
                 # A event exists — compute bidirectional
                 bidir = round((a_evt['splice_loss'] + b_loss_signed) / 2.0, 4)
@@ -462,19 +469,16 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
                     'is_flagged': True, 'event_source': 'bidir',
                     'event_type': a_evt['type'],
-                    'label': f"{fnum} {loss_str}",
+                    'label': f"{fnum} {loss_str} ({b_off_str})",
                 }
             else:
                 # No A event — B-only.
-                # Estimated bidir = B / 2 (A direction measured zero).
-                # Show the bidir average as the cell value so it compares
-                # directly to threshold, same as a normal A+B entry.
                 est_bidir = round(b_loss_abs / 2.0, 3)
                 est_str = f"{est_bidir:.3f}"
                 if est_str.startswith('0.'): est_str = est_str[1:]
                 new_results[(fnum, nearest_si)] = {
                     'fiber': fnum, 'splice_idx': nearest_si,
-                    'bidir_loss': est_bidir,          # treat as the bidir value
+                    'bidir_loss': est_bidir,
                     'a_loss': None, 'b_loss': b_loss_signed,
                     'bidir_dist': a_frame_km,
                     'est_bidir': est_bidir,
@@ -483,7 +487,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'is_bfill': False, 'is_a_only': False, 'is_b_only': True,
                     'is_flagged': True, 'event_source': 'b_only',
                     'event_type': e['type'],
-                    'label': f"{fnum} {est_str} (B)",  # clean: 325 .172 (B)
+                    'label': f"{fnum} {est_str} (B) ({b_off_str})",
                 }
 
     return new_results
