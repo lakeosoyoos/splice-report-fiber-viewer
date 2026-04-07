@@ -287,6 +287,14 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             if ea is None:
                 continue
 
+            # Guard: only claim this event if THIS splice is the nearest one to it.
+            # Prevents double-counting when two splice positions are < POSITION_TOL apart
+            # (e.g. S5 @ 27.92 km and S6 @ 29.10 km are only 1.18 km apart — an event
+            # at 29 km falls within tolerance of both, but belongs only to S6).
+            if any(abs(ea['dist_km'] - other_sp['position_km']) < abs(ea['dist_km'] - sp_km)
+                   for other_si, other_sp in enumerate(splices) if other_si != si):
+                continue
+
             # ── Find matching B event ──
             eb = None
             b_loss = None
