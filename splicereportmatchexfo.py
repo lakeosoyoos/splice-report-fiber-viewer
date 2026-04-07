@@ -88,12 +88,37 @@ def load_all(dir_a, dir_b):
     def extract_fiber_num(fn):
         base = fn.split('.')[0]          # drop extension
         parts = base.split('_')          # split on underscore
-        # The fiber number is the LAST all-digit segment (e.g. "084" in
-        # FTHNTXAD06_FTHNTXAD01_084).  Walk parts right-to-left.
+
+        # Handles two common naming conventions:
+        #  A) FTHNTXAD06_FTHNTXAD01_085   → last pure-digit segment "085" = fiber 85
+        #  B) TULBAR001_1550               → last segment "1550" is the OTDR wavelength
+        #       (800–1700 nm), so skip it; trailing digits from the alphanumeric
+        #       segment "TULBAR001" → "001" = fiber 1
+        #
+        # Walk right-to-left:
+        #   • Pure-digit segment NOT in wavelength range → fiber number
+        #   • Pure-digit segment IN wavelength range    → skip (it's the wavelength)
+        #   • Alphanumeric segment (letters + digits)    → take its trailing digits
         for part in reversed(parts):
-            digits = ''.join(c for c in part if c.isdigit())
-            if digits:
-                return int(digits)
+            if part.isdigit():
+                val = int(part)
+                if 800 <= val <= 1700:          # OTDR wavelength (nm) — skip
+                    continue
+                if val >= 1:
+                    return val
+            elif any(c.isdigit() for c in part):
+                # Extract trailing run of digits (e.g. "TULBAR001" → "001")
+                trailing = ''
+                for c in reversed(part):
+                    if c.isdigit():
+                        trailing = c + trailing
+                    else:
+                        break
+                if trailing:
+                    val = int(trailing)
+                    if val >= 1:
+                        return val
+
         # Fallback: strip all non-digits from whole base
         digits = ''.join(c for c in base if c.isdigit())
         return int(digits) if digits else None
@@ -280,17 +305,14 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             # B event table had no entry within tolerance — estimate bidir as A/2
             if b_loss is None:
                 a_loss_abs = abs(ea['splice_loss'])
-                if a_loss_abs / 2.0 >= threshold:
-                    est_bidir = round(a_loss_abs / 2.0, 3)
-                    loss_str = f"{a_loss_abs:.3f}"
-                    if loss_str.startswith('0.'): loss_str = loss_str[1:]
+                est_bidir = round(a_loss_abs / 2.0, 3)
+                if est_bidir >= threshold:
                     est_str = f"{est_bidir:.3f}"
                     if est_str.startswith('0.'): est_str = est_str[1:]
-                    # Mark whether estimated bidir still exceeds threshold
-                    bidir_flag = '⚠' if est_bidir >= threshold else '~'
                     results[(fnum, si)] = {
                         'fiber': fnum, 'splice_idx': si,
-                        'bidir_loss': None, 'a_loss': ea['splice_loss'], 'b_loss': None,
+                        'bidir_loss': est_bidir,      # treat as the bidir value
+                        'a_loss': ea['splice_loss'], 'b_loss': None,
                         'bidir_dist': ea['dist_km'],
                         'est_bidir': est_bidir,
                         'est_bidir_flagged': est_bidir >= threshold,
@@ -298,7 +320,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                         'is_bfill': False, 'is_a_only': True, 'is_b_only': False,
                         'is_flagged': True, 'event_source': 'a_only',
                         'event_type': ea['type'],
-                        'label': f"{fnum} {loss_str}(A) {bidir_flag}{est_str}bd",
+                        'label': f"{fnum} {est_str} (A)",  # clean: 285 .160 (A)
                     }
                 continue
 
@@ -435,17 +457,16 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'label': f"{fnum} {loss_str}",
                 }
             else:
-                # No A event — B-only
-                # A event table had no entry within tolerance — estimate bidir as B/2
+                # No A event — B-only.
+                # Estimated bidir = B / 2 (A direction measured zero).
+                # Show the bidir average as the cell value so it compares
+                # directly to threshold, same as a normal A+B entry.
                 est_bidir = round(b_loss_abs / 2.0, 3)
-                loss_str = f"{b_loss_abs:.3f}"
-                if loss_str.startswith('0.'): loss_str = loss_str[1:]
                 est_str = f"{est_bidir:.3f}"
                 if est_str.startswith('0.'): est_str = est_str[1:]
-                bidir_flag = '⚠' if est_bidir >= threshold else '~'
                 new_results[(fnum, nearest_si)] = {
                     'fiber': fnum, 'splice_idx': nearest_si,
-                    'bidir_loss': None,
+                    'bidir_loss': est_bidir,          # treat as the bidir value
                     'a_loss': None, 'b_loss': b_loss_signed,
                     'bidir_dist': a_frame_km,
                     'est_bidir': est_bidir,
@@ -454,7 +475,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'is_bfill': False, 'is_a_only': False, 'is_b_only': True,
                     'is_flagged': True, 'event_source': 'b_only',
                     'event_type': e['type'],
-                    'label': f"{fnum} {loss_str}(B) {bidir_flag}{est_str}bd",
+                    'label': f"{fnum} {est_str} (B)",  # clean: 325 .172 (B)
                 }
 
     return new_results
@@ -522,8 +543,8 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices):
                 parts.append(f"{fib_str} {loss_str} (A)")
             elif g['is_b_only']:
                 fib_str = ','.join(str(f) for f in g['fibers'])
-                raw_loss = g['res']['b_loss']
-                loss_abs = abs(raw_loss) if raw_loss is not None else 0
+                # Use bidir_loss (= est_bidir = b/2) so it reads like a normal splice
+                loss_abs = abs(g['res'].get('bidir_loss') or g['res'].get('est_bidir') or 0)
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
                 parts.append(f"{fib_str} {loss_str} (B)")
@@ -691,15 +712,17 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                     cell.font = bfill_font
                 elif cd.get('is_b_only'):
                     if cd.get('est_bidir_flagged'):
-                        cell.fill = bonly_fill2
-                        cell.font = bonly_font2
+                        # Estimated bidir (B/2) clears threshold → pink like a normal reburn
+                        cell.fill = red_fill
+                        cell.font = data_font
                     else:
                         cell.fill = bonly_fill
                         cell.font = bonly_font
                 elif cd.get('is_a_only'):
                     if cd.get('est_bidir_flagged'):
-                        cell.fill = aonly_fill2
-                        cell.font = aonly_font2
+                        # Estimated bidir (A/2) clears threshold → pink like a normal reburn
+                        cell.fill = red_fill
+                        cell.font = data_font
                     else:
                         cell.fill = aonly_fill
                         cell.font = aonly_font

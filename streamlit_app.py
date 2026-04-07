@@ -575,9 +575,11 @@ if run_button and has_a:
                 elif r.get('is_bfill'):
                     etype = 'bfill'
                 elif r.get('is_a_only'):
-                    etype = 'a_only_high' if r.get('est_bidir_flagged') else 'a_only'
+                    # est_bidir >= threshold → pink like a normal reburn (matches Excel)
+                    etype = 'flagged' if r.get('est_bidir_flagged') else 'a_only'
                 elif r.get('is_b_only'):
-                    etype = 'b_only_high' if r.get('est_bidir_flagged') else 'b_only'
+                    # est_bidir >= threshold → pink like a normal reburn (matches Excel)
+                    etype = 'flagged' if r.get('est_bidir_flagged') else 'b_only'
                 else:
                     etype = 'flagged'
                 loss = r.get('bidir_loss') or r.get('a_loss') or r.get('b_loss') or 0
@@ -863,7 +865,7 @@ else:
                 <li>Adjust the reburn threshold if needed — default is 0.150 dB</li>
                 <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the viewer</li>
                 <li>Click <strong>Generate Viewer</strong> to launch the interactive splice table and 2D OTDR trace</li>
-                <li>Use <strong>Pop Out 2D</strong> to open the trace on a second monitor, then <strong>&#9658; Collapse 2D</strong> to go full-width on the table</li>
+                <li>Use <strong>Pop Out Right Screen</strong> to open the trace on a second monitor, then <strong>Collapse Right Screen</strong> to go full-width on the splice table, or <strong>Expand Right Screen</strong> to restore the split view</li>
             </ul>
         </div>
         <div class="tc-card" style="flex:1;">
@@ -933,27 +935,32 @@ else:
         <div style="flex:1;background:#fff;border:1px solid #e5e5e5;border-top:4px solid #E8461E;
                     border-radius:4px;padding:22px 24px;box-shadow:0 2px 10px rgba(0,0,0,0.05);">
             <div style="font-family:'Nunito',sans-serif;font-size:15px;font-weight:900;
-                        color:#1a1a1a;margin-bottom:12px;">Right Panel - 2D OTDR Trace</div>
+                        color:#1a1a1a;margin-bottom:12px;">Right Panel - Bidirectional OTDR Trace &amp; Event Table</div>
             <ul style="list-style:none;padding:0;margin:0;">
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Full-height 2D OTDR trace — scroll to zoom, drag to pan, hover for event details
+                    EXFO-style composite trace — A-direction raw signal stitched to B-direction (mirrored), with dark-zone fill across any break gap; A+B average shown where both are available
                 </li>
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Colored dots mark flagged splice events; breaks and brokes shown in red/orange
+                    View a single fiber or the full ribbon (up to 12 fibers overlaid) — click a ribbon cell or type a fiber number to switch; scroll to zoom, drag to pan
                 </li>
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Enter a fiber number or click Full Ribbon to switch views
+                    Break and broke markers shown in red/orange with km label; trace automatically clips at the noise floor so only clean signal is displayed
                 </li>
                 <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
                             color:#333;padding:4px 0;display:flex;gap:8px;">
                     <span style="color:#E8461E;font-weight:900;">▸</span>
-                    Pop Out 2D opens a live interactive copy on a second monitor; Collapse 2D expands the splice table to full width
+                    Event table below the trace lists every OTDR event with distance (km &amp; ft), event type, splice loss, reflection level, and attenuation slope
+                </li>
+                <li style="font-family:'Nunito',sans-serif;font-size:13px;font-weight:600;
+                            color:#333;padding:4px 0;display:flex;gap:8px;">
+                    <span style="color:#E8461E;font-weight:900;">▸</span>
+                    Pop Out Right Screen opens a live interactive copy on a second monitor; Collapse / Expand Right Screen controls the split between the splice table and the trace panel
                 </li>
             </ul>
         </div>
