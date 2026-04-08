@@ -54,18 +54,36 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
 }
 #restore-btn:hover { background: #c23610; }
 #top-panel { flex: 1; min-height: 0; position: relative; overflow: hidden; }
-#bot-panel { height: 220px; min-height: 120px; border-top: 2px solid #E8461E; overflow: hidden; display: flex; flex-direction: column; }
+#bot-panel { height: 240px; min-height: 140px; border-top: 2px solid #E8461E; overflow: hidden; display: flex; flex-direction: column; }
 #trace-canvas { width: 100%; height: 100%; }
 #topo-3d { width: 100%; height: 100%; }
-#evt-panel { flex: 1; overflow-y: auto; background: #1a2224; padding: 4px 6px; }
-#evt-panel table { width: 100%; border-collapse: collapse; font-size: 10px; font-family: monospace; }
-#evt-panel th { background: #1F4E79; color: #fff; padding: 3px 6px; text-align: left; position: sticky; top: 0; font-size: 9px; white-space: nowrap; }
-#evt-panel td { padding: 2px 6px; border-bottom: 1px solid #2a3a3a; color: #e0e0e0; white-space: nowrap; }
-#evt-panel tr:hover td { background: #2a3a4a; }
-#evt-panel .evt-end   { color: #82d982; }
-#evt-panel .evt-brk   { color: #ff6b6b; font-weight: bold; }
-#evt-panel .evt-refl  { color: #ffa94d; }
-#evt-panel .evt-hdr   { background: #1C3050; color: #cce4ff; font-size: 9px; padding: 2px 6px; font-weight: bold; }
+#evt-panel { flex: 1; overflow-x: auto; overflow-y: auto; background: #1a2224; padding: 0; }
+/* EXFO-style transposed table: fibers = rows, splice positions = columns */
+#evt-panel table { border-collapse: collapse; font-size: 10px; font-family: 'Nunito', monospace; white-space: nowrap; }
+/* Sticky fiber/dir columns */
+#evt-panel th.fix, #evt-panel td.fix { position: sticky; z-index: 2; background: #1a2224; }
+#evt-panel th.fix { background: #1F4E79; z-index: 3; }
+#evt-panel th.fix-0 { left: 0; min-width: 52px; }
+#evt-panel th.fix-1 { left: 52px; min-width: 40px; }
+#evt-panel td.fix-0 { left: 0; min-width: 52px; }
+#evt-panel td.fix-1 { left: 52px; min-width: 40px; }
+/* Header rows */
+#evt-panel th { background: #1F4E79; color: #fff; padding: 2px 5px; text-align: center; font-size: 9px; white-space: nowrap; border-right: 1px solid #2c4a6e; top: 0; position: sticky; }
+#evt-panel th.sp-hdr { background: #1C3050; font-size: 8px; line-height: 1.3; min-width: 40px; }
+#evt-panel th.end-hdr { background: #1a3a2a; color: #82d982; }
+#evt-panel th.sub { background: #16375a; font-size: 8px; color: #aaccee; font-weight: normal; min-width: 40px; padding: 1px 4px; }
+#evt-panel th.sub-end { background: #122a1e; color: #82d982; font-size: 8px; font-weight: normal; }
+/* Data cells */
+#evt-panel td { padding: 2px 5px; border-bottom: 1px solid #222e2e; border-right: 1px solid #222e2e; color: #e0e0e0; text-align: center; font-size: 10px; }
+#evt-panel tr:hover td { background: #243040; }
+#evt-panel td.loss-hi  { color: #ff9999; font-weight: bold; }  /* flagged splice */
+#evt-panel td.loss-ok  { color: #e0e0e0; }
+#evt-panel td.refl-val { color: #ffa94d; }                     /* reflective */
+#evt-panel td.end-cell { color: #82d982; }                     /* end event */
+#evt-panel td.brk-cell { color: #ff6b6b; font-weight: bold; } /* break */
+#evt-panel td.gap-cell { color: #444; }                        /* no event at this splice */
+#evt-panel td.fiber-id { text-align: left; color: #cce4ff; font-weight: bold; font-size: 9px; padding-left: 6px; }
+#evt-panel td.dir-cell { color: #aaa; font-size: 9px; }
 
 #controls {
   position: absolute; top: 4px; right: 4px; background: rgba(255,255,255,0.92); border: 1px solid #ccc;
@@ -124,9 +142,7 @@ body { background: #fff; color: #333; font-family: 'Segoe UI', system-ui, sans-s
     </div>
   </div>
   <div id="bot-panel">
-    <div id="evt-panel"><table><thead><tr>
-      <th>#</th><th>km (A-frame)</th><th>ft</th><th>Type</th><th>Splice Loss (dB)</th><th>Refl (dB)</th><th>Slope (dB/km)</th>
-    </tr></thead><tbody id="evt-body"><tr><td colspan="7" style="color:#666;text-align:center;padding:20px">Select a fiber or ribbon to see events</td></tr></tbody></table></div>
+    <div id="evt-panel"><div style="color:#555;text-align:center;padding:20px;font-size:11px">Select a fiber or ribbon to see events</div></div>
     <div id="topo-3d" style="display:none"></div>
     <div id="topo-tooltip"></div>
   </div>
@@ -747,40 +763,113 @@ function buildCompositeTrace(fnum, traceA, traceB, brk) {
 }
 
 function updateEvtTable() {
-  const tbody = document.getElementById('evt-body');
-  if (!tbody) return;
+  const panel = document.getElementById('evt-panel');
+  if (!panel) return;
+
   const fibers = currentFiber > 0 ? [currentFiber]
-    : currentRibbon >= 0 ? Array.from({length: data.ribbons[currentRibbon].f_end - data.ribbons[currentRibbon].f_start + 1},
+    : currentRibbon >= 0 ? Array.from(
+        {length: data.ribbons[currentRibbon].f_end - data.ribbons[currentRibbon].f_start + 1},
         (_, i) => data.ribbons[currentRibbon].f_start + i)
     : [];
+
   if (!fibers.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;text-align:center;padding:12px">Select a fiber or ribbon</td></tr>';
+    panel.innerHTML = '<div style="color:#555;text-align:center;padding:20px;font-size:11px">Select a fiber or ribbon to see events</div>';
     return;
   }
-  const rows = [];
+
+  const splices  = data.splices || [];
+  const spanKm   = data.meta.span_km;
+  const thresh   = data.meta.threshold || 0.150;
+  const MATCH_TOL = 1.5; // km — same as Python POSITION_TOL
+
+  // ── Build header rows ──────────────────────────────────────────────────
+  // Row 1: fixed col labels + one colspan=2 per splice + End col
+  let hdr1 = '<tr>';
+  hdr1 += '<th class="fix fix-0" rowspan="2">Fiber</th>';
+  hdr1 += '<th class="fix fix-1" rowspan="2">Dir</th>';
+  for (const sp of splices) {
+    const km = sp.km.toFixed(3);
+    const ft = Math.round(sp.km * 3280.84).toLocaleString();
+    hdr1 += `<th colspan="2" class="sp-hdr">S${sp.splice_num}<br>${km} km<br><span style="font-size:7px;color:#8ab">${ft} ft</span></th>`;
+  }
+  hdr1 += '<th colspan="2" class="end-hdr">1E End</th>';
+  hdr1 += '</tr>';
+
+  // Row 2: Loss / Refl sub-headers for each column group
+  let hdr2 = '<tr>';
+  const nGroups = splices.length + 1;
+  for (let i = 0; i < nGroups; i++) {
+    const isEnd = i === splices.length;
+    hdr2 += `<th class="${isEnd ? 'sub-end' : 'sub'}">Loss</th>`;
+    hdr2 += `<th class="${isEnd ? 'sub-end' : 'sub'}">Refl</th>`;
+  }
+  hdr2 += '</tr>';
+
+  // ── Build data rows — one per fiber ────────────────────────────────────
+  let bodyRows = '';
   for (const fnum of fibers) {
     const rawEvts = data.raw_events_a && data.raw_events_a[String(fnum)];
     const brk     = data.breaks && data.breaks[String(fnum)];
-    const spanKm  = data.meta.span_km;
     if (!rawEvts || rawEvts.length === 0) continue;
-    if (fibers.length > 1) {
-      rows.push(`<tr><td colspan="7" class="evt-hdr">F${fnum}${brk ? ` ⚠ BREAK @ ${brk.km.toFixed(3)} km` : ''}</td></tr>`);
+
+    const brkLabel = brk ? ` ⚠${brk.type}` : '';
+    bodyRows += '<tr>';
+    bodyRows += `<td class="fix fix-0 fiber-id">F${fnum}${brkLabel}</td>`;
+    bodyRows += `<td class="fix fix-1 dir-cell">A→B</td>`;
+
+    // One cell pair per splice position
+    for (const sp of splices) {
+      // Find the nearest event to this splice within tolerance
+      let best = null, bestD = MATCH_TOL;
+      for (const e of rawEvts) {
+        if (e.is_end) continue;
+        const d = Math.abs(e.km - sp.km);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+
+      if (!best) {
+        // No event near this splice — gray dash
+        bodyRows += '<td class="gap-cell">—</td><td class="gap-cell">—</td>';
+      } else {
+        const isBrk  = brk && Math.abs(best.km - brk.km) < 0.5;
+        const isRefl = best.is_reflective;
+        const isHigh = best.splice_loss >= thresh;
+
+        const lossCls = isBrk ? 'brk-cell' : isHigh ? 'loss-hi' : 'loss-ok';
+        const lossVal = best.splice_loss > 0.001
+          ? best.splice_loss.toFixed(4)
+          : (isBrk ? 'BRK' : '—');
+
+        const reflCls = isRefl ? 'refl-val' : 'gap-cell';
+        const reflVal = best.reflection < -0.5
+          ? best.reflection.toFixed(1)
+          : '—';
+
+        bodyRows += `<td class="${lossCls}">${lossVal}</td>`;
+        bodyRows += `<td class="${reflCls}">${reflVal}</td>`;
+      }
     }
-    for (const e of rawEvts) {
-      const km   = e.km;
-      const ft   = Math.round(km * 3280.84).toLocaleString();
-      const isBrk = brk && Math.abs(km - brk.km) < 0.5;
-      const isEnd  = e.is_end || Math.abs(km - spanKm) < 1.0;
-      const isRefl = e.is_reflective && !isEnd;
-      const cls  = isBrk ? 'evt-brk' : isEnd ? 'evt-end' : isRefl ? 'evt-refl' : '';
-      const type = isBrk ? '1F BREAK' : isEnd ? '1E END' : isRefl ? '1F Refl' : '0F Splice';
-      const loss  = e.splice_loss > 0.001 ? e.splice_loss.toFixed(4) : '—';
-      const refl  = e.reflection < -0.5 ? e.reflection.toFixed(2) + ' dB' : '—';
-      const slope = e.slope !== 0 ? e.slope.toFixed(4) : '—';
-      rows.push(`<tr class="${cls}"><td>${fnum}</td><td>${km.toFixed(3)}</td><td>${ft}</td><td>${type}</td><td>${loss}</td><td>${refl}</td><td>${slope}</td></tr>`);
+
+    // End event column
+    const endEvt = rawEvts.find(e => e.is_end || Math.abs(e.km - spanKm) < 1.5);
+    if (endEvt) {
+      const endKm = endEvt.km.toFixed(3);
+      const endRefl = endEvt.reflection < -0.5 ? endEvt.reflection.toFixed(1) : '—';
+      bodyRows += `<td class="end-cell">${endKm} km</td>`;
+      bodyRows += `<td class="end-cell">${endRefl}</td>`;
+    } else {
+      bodyRows += '<td class="gap-cell">—</td><td class="gap-cell">—</td>';
     }
+
+    bodyRows += '</tr>';
   }
-  tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="7" style="color:#666;text-align:center;padding:12px">No events found</td></tr>';
+
+  if (!bodyRows) {
+    panel.innerHTML = '<div style="color:#555;text-align:center;padding:20px;font-size:11px">No events found</div>';
+    return;
+  }
+
+  panel.innerHTML = `<table><thead>${hdr1}${hdr2}</thead><tbody>${bodyRows}</tbody></table>`;
   document.getElementById('bot-panel').style.display = 'flex';
   document.getElementById('bot-panel').style.flexDirection = 'column';
 }
